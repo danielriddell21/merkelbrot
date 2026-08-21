@@ -271,3 +271,40 @@ func TestEmptyOptionsMatchExplicitDefaults(t *testing.T) {
 		t.Errorf("zero-value options gave bounds %+v, want %+v", zero.Bounds, explicit.Bounds)
 	}
 }
+
+// TestPayloadDoesNotOverlapChildren guards the rule that keeps a node readable:
+// fields and nested content must occupy separate ground.
+func TestPayloadDoesNotOverlapChildren(t *testing.T) {
+	fields := make([]graph.Field, 6)
+	for i := range fields {
+		fields[i] = graph.Field{Key: "k", Value: "v"}
+	}
+	g := mustGraph(t, graph.NewMemorySource([]string{"root"},
+		graph.Node[string]{ID: "root", Payload: fields, Children: []string{"a", "b", "c"}},
+		graph.Node[string]{ID: "a"},
+		graph.Node[string]{ID: "b"},
+		graph.Node[string]{ID: "c"},
+	))
+	p := layout.Pack(g, layout.Options{})
+	nodes := byID(p)
+	root := nodes["root"]
+
+	if len(root.Payload) != len(fields) {
+		t.Fatalf("%d slots, want %d", len(root.Payload), len(fields))
+	}
+	for i, s := range root.Payload {
+		// Slots are relative to the node, so scale them into layout coordinates.
+		sx := root.X + s.X*root.R
+		sy := root.Y + s.Y*root.R
+		sr := s.R * root.R
+		if d := math.Hypot(sx-root.X, sy-root.Y) + sr; d > root.R+epsilon {
+			t.Errorf("slot %d escapes its node: %g > %g", i, d, root.R)
+		}
+		for _, kid := range []string{"a", "b", "c"} {
+			c := nodes[kid]
+			if gap := math.Hypot(sx-c.X, sy-c.Y) - (sr + c.R); gap < -epsilon {
+				t.Errorf("slot %d overlaps child %s by %g", i, kid, -gap)
+			}
+		}
+	}
+}

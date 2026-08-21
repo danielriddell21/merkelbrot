@@ -32,11 +32,15 @@ as wide as possible.
 
 # Node internals
 
-A node's payload fields are packed as equal circles inside it and reported as
-[Slot] values in coordinates relative to the node: an offset in units of the
-node's own radius. A renderer multiplies through by the node's radius and draws
-them only once the node is large enough on screen to be worth reading, which is
-what gives the deepest zoom level something to reveal.
+A node's payload fields are packed as equal circles and reported as [Slot] values
+in coordinates relative to the node: an offset in units of the node's own radius,
+so a renderer multiplies through by [Placed.R] to draw them.
+
+Where a node has children as well as fields, the fields are packed into a disc of
+their own that takes its place among the children, so text never lands on top of
+nested content. A childless node gives its fields the whole of its interior.
+Either way a renderer reveals them only once they are large enough on screen to
+read, which is what gives the deepest zoom level something to show.
 
 # Determinism
 
@@ -220,15 +224,26 @@ func Pack[K comparable](g *graph.Graph[K], opts Options) *Packing[K] {
 	unitCache := make(map[int][]Circle)
 	radius := make([]float64, n+1)
 	offsets := make([][]Circle, n+1)
+	// area is where a node's payload fields live, relative to the node's centre
+	// and in units of its radius. A node holding both children and fields packs
+	// the fields into a disc of their own so the two never overlap.
+	area := make([]Circle, n+1)
 	for _, v := range postorder(domKids, start) {
 		kids := domKids[v]
+		fields := payloadCount(g, ids, v, start)
+
 		if len(kids) == 0 {
 			radius[v] = leafRadius(g, ids, v, start, opts)
+			area[v] = Circle{R: opts.PayloadFill}
 			continue
 		}
-		circles := make([]Circle, len(kids))
+
+		circles := make([]Circle, len(kids), len(kids)+1)
 		for i, kid := range kids {
 			circles[i].R = radius[kid]
+		}
+		if fields > 0 {
+			circles = append(circles, Circle{R: payloadRadius(fields, opts)})
 		}
 		radius[v] = packSiblings(circles)
 		// The virtual start is not drawn, so padding it would leave a dead ring
@@ -236,7 +251,15 @@ func Pack[K comparable](g *graph.Graph[K], opts Options) *Packing[K] {
 		if v != start {
 			radius[v] += opts.Padding
 		}
-		offsets[v] = circles
+		offsets[v] = circles[:len(kids)]
+		if fields > 0 && radius[v] > 0 {
+			slot := circles[len(kids)]
+			area[v] = Circle{
+				X: slot.X / radius[v],
+				Y: slot.Y / radius[v],
+				R: slot.R / radius[v] * opts.PayloadFill,
+			}
+		}
 	}
 
 	centre := make([]Circle, n+1)
@@ -251,7 +274,7 @@ func Pack[K comparable](g *graph.Graph[K], opts Options) *Packing[K] {
 				Y: centre[cur].Y + offsets[cur][i].Y,
 				R: radius[kid],
 			}
-			out.Nodes = append(out.Nodes, placed(g, ids, kid, cur, start, depth[kid], centre[kid], len(domKids[kid]) == 0, opts, unitCache))
+			out.Nodes = append(out.Nodes, placed(g, ids, kid, cur, start, depth[kid], centre[kid], len(domKids[kid]) == 0, area[kid], opts, unitCache))
 			queue = append(queue, kid)
 		}
 	}
@@ -275,7 +298,7 @@ func Pack[K comparable](g *graph.Graph[K], opts Options) *Packing[K] {
 	return out
 }
 
-func placed[K comparable](g *graph.Graph[K], ids []K, v, parent, start int, depth int, c Circle, leaf bool, opts Options, unitCache map[int][]Circle) Placed[K] {
+func placed[K comparable](g *graph.Graph[K], ids []K, v, parent, start int, depth int, c Circle, leaf bool, area Circle, opts Options, unitCache map[int][]Circle) Placed[K] {
 	id := ids[v]
 	n, _ := g.Node(id)
 	p := Placed[K]{
@@ -302,9 +325,9 @@ func placed[K comparable](g *graph.Graph[K], ids []K, v, parent, start int, dept
 		for i, field := range n.Payload {
 			p.Payload[i] = Slot{
 				Circle: Circle{
-					X: unit[i].X * opts.PayloadFill,
-					Y: unit[i].Y * opts.PayloadFill,
-					R: unit[i].R * opts.PayloadFill,
+					X: area.X + unit[i].X*area.R,
+					Y: area.Y + unit[i].Y*area.R,
+					R: unit[i].R * area.R,
 				},
 				Field: field,
 			}
@@ -324,6 +347,18 @@ func countAtLeastTwo[K comparable](g *graph.Graph[K], id K) bool {
 	return false
 }
 
+func payloadCount[K comparable](g *graph.Graph[K], ids []K, v, start int) int {
+	if v == start {
+		return 0
+	}
+	n, _ := g.Node(ids[v])
+	return len(n.Payload)
+}
+
+func payloadRadius(fields int, opts Options) float64 {
+	return opts.LeafRadius * math.Sqrt(float64(fields))
+}
+
 func leafRadius[K comparable](g *graph.Graph[K], ids []K, v, start int, opts Options) float64 {
 	if v == start {
 		return opts.LeafRadius
@@ -335,7 +370,7 @@ func leafRadius[K comparable](g *graph.Graph[K], ids []K, v, start int, opts Opt
 	}
 	r := opts.LeafRadius * math.Sqrt(w)
 	if k := len(n.Payload); k > 0 {
-		r = max(r, opts.LeafRadius*math.Sqrt(float64(k)))
+		r = max(r, payloadRadius(k, opts))
 	}
 	return r
 }

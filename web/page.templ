@@ -1,0 +1,77 @@
+package web
+
+import (
+	"fmt"
+
+	"github.com/danielriddell21/merkelbrot/scene"
+)
+
+templ page(title string, s *scene.Scene, sceneJSON, css, js string) {
+	<!DOCTYPE html>
+	<html lang="en-GB">
+		<head>
+			<meta charset="utf-8"/>
+			<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+			<title>{ title }</title>
+			@templ.Raw("<style>" + css + "</style>")
+		</head>
+		<body>
+			<canvas id="view"></canvas>
+			<header class="hud hud-top">
+				<h1>{ title }</h1>
+				@stats(s.Stats)
+			</header>
+			@legend(s)
+			<div class="hud hud-crumb" id="crumb" hidden></div>
+			<div class="tip" id="tip" hidden></div>
+			<footer class="hud hud-help">
+				<span><kbd>scroll</kbd> zoom</span>
+				<span><kbd>drag</kbd> pan</span>
+				<span><kbd>click</kbd> focus</span>
+				<span><kbd>esc</kbd> out</span>
+				<span><kbd>f</kbd> fit</span>
+			</footer>
+			@templ.Raw(`<script type="application/json" id="scene">` + sceneJSON + `</script>`)
+			@templ.Raw("<script>" + js + "</script>")
+		</body>
+	</html>
+}
+
+templ stats(st scene.Stats) {
+	<dl class="stats">
+		@stat("nodes", fmt.Sprint(st.Nodes))
+		if st.Links > 0 {
+			@stat("links", fmt.Sprint(st.Links))
+		}
+		if st.Shared > 0 {
+			@stat("shared", fmt.Sprint(st.Shared))
+		}
+		@stat("depth", fmt.Sprint(st.MaxDepth+1))
+	</dl>
+}
+
+templ stat(name, value string) {
+	<div>
+		<dt>{ name }</dt>
+		<dd>{ value }</dd>
+	</div>
+}
+
+templ legend(s *scene.Scene) {
+	if len(s.Kinds) > 0 || len(s.Highlights) > 0 {
+		<aside class="hud hud-legend">
+			<ul class="kinds">
+				for i, kind := range s.Kinds {
+					<li data-kind={ fmt.Sprint(i) }>{ kind }</li>
+				}
+			</ul>
+			if len(s.Highlights) > 0 {
+				<ul class="marks">
+					for _, h := range s.Highlights {
+						<li data-mark={ h.Kind }>{ h.Name }</li>
+					}
+				</ul>
+			}
+		</aside>
+	}
+}
