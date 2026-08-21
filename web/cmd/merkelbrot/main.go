@@ -6,8 +6,9 @@
 //	merkelbrot export [flags]   write a self-contained HTML page to stdout
 //	merkelbrot scene  [flags]   write the scene as JSON to stdout
 //
-// The demo sources are example data: a generated UK payments ledger, or a
-// generated content-addressed Merkle DAG. Run with -h for the full flag set.
+// Sources are a generated UK payments ledger, a generated content-addressed
+// Merkle DAG, or the object graph of a real git repository. Run with -h for the
+// full flag set.
 package main
 
 import (
@@ -21,6 +22,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/danielriddell21/merkelbrot/examples/gitrepo"
 	"github.com/danielriddell21/merkelbrot/examples/ledger"
 	"github.com/danielriddell21/merkelbrot/examples/synthetic"
 	"github.com/danielriddell21/merkelbrot/graph"
@@ -39,6 +41,7 @@ func main() {
 
 type options struct {
 	source   string
+	repo     string
 	seed     uint64
 	count    int
 	maxDepth int
@@ -47,9 +50,10 @@ type options struct {
 }
 
 func (o *options) bind(fs *flag.FlagSet) {
-	fs.StringVar(&o.source, "source", "ledger", "demo source: ledger or synthetic")
+	fs.StringVar(&o.source, "source", "ledger", "source: ledger, synthetic or git")
+	fs.StringVar(&o.repo, "repo", ".", "repository to read when -source=git")
 	fs.Uint64Var(&o.seed, "seed", 1, "seed for the generated source")
-	fs.IntVar(&o.count, "n", 24, "how much to generate: transactions, or commits for synthetic")
+	fs.IntVar(&o.count, "n", 24, "how much to read: transactions, or commits for synthetic and git")
 	fs.IntVar(&o.maxDepth, "max-depth", 0, "limit containment levels, 0 for no limit")
 	fs.StringVar(&o.prove, "prove", "", "highlight the inclusion path for this node ID")
 	fs.StringVar(&o.addr, "addr", "127.0.0.1:8080", "address to listen on")
@@ -120,8 +124,15 @@ func build(o *options) (*scene.Scene, error) {
 	case "synthetic":
 		src = synthetic.New(synthetic.Config{Seed: o.seed, Commits: o.count, Depth: 3, Branching: 3, Vocabulary: 16})
 		title = "synthetic Merkle DAG"
+	case "git":
+		repo, err := gitrepo.Open(o.repo, gitrepo.Config{MaxCommits: o.count})
+		if err != nil {
+			return nil, err
+		}
+		src = repo
+		title = "git objects: " + o.repo
 	default:
-		return nil, fmt.Errorf("unknown source %q, want ledger or synthetic", o.source)
+		return nil, fmt.Errorf("unknown source %q, want ledger, synthetic or git", o.source)
 	}
 
 	g, err := graph.New(src)
