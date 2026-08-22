@@ -1,0 +1,34 @@
+[tools]
+go = "1.26.4"
+"go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint" = "2.5.0"
+lefthook = "latest"
+"go:github.com/a-h/templ/cmd/templ" = "0.3.1020"
+"go:github.com/goreleaser/goreleaser/v2" = "latest"
+
+[tasks.generate]
+description = "Regenerate templ components"
+run = "cd web && templ generate"
+
+[tasks.build]
+description = "Build both modules"
+run = "go build ./... ./web/..."
+
+[tasks.test]
+description = "Run every test in the workspace"
+run = "go test ./... ./web/..."
+
+[tasks.lint]
+description = "Run golangci-lint over the workspace"
+run = "golangci-lint run ./... ./web/..."
+
+[tasks.fmt]
+description = "Format all Go source"
+run = "gofmt -w ."
+
+[tasks.serve]
+description = "Serve the ledger demo"
+run = "go run ./web/cmd/merkelbrot serve"
+
+[tasks.hooks]
+description = "Install the git hooks"
+run = "lefthook install"

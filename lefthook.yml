@@ -1,0 +1,18 @@
+pre-commit:
+  parallel: true
+  jobs:
+    - name: gofmt
+      glob: "*.go"
+      run: test -z "$(gofmt -l {staged_files})" || { gofmt -l {staged_files}; exit 1; }
+    - name: templ
+      glob: "web/*.templ"
+      run: cd web && templ generate && git diff --exit-code -- '*_templ.go'
+    - name: lint
+      run: golangci-lint run ./... ./web/...
+    - name: test
+      run: go test ./... ./web/...
+
+pre-push:
+  jobs:
+    - name: test
+      run: go test ./... ./web/...
