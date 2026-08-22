@@ -289,12 +289,12 @@ func (s *Source) history(cp counterparty, gross int64, scheme string, returned b
 	minute := 14 + rng.IntN(20)
 	for _, status := range flow {
 		var posted []string
-		switch {
-		case status == statusAuthorise:
+		switch status {
+		case statusAuthorise:
 			posted = []string{s.entry(recognition(cp, gross))}
-		case status == statusReturned:
+		case statusReturned:
 			posted = []string{s.entry(reverse(settlement(cp, gross)))}
-		case status == banksAt:
+		case banksAt:
 			posted = []string{s.entry(settlement(cp, gross))}
 		}
 		logs = append(logs, s.put("log", status, posted, []graph.Field{
