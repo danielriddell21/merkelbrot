@@ -2,21 +2,35 @@ version: 2
 
 project_name: merkelbrot
 
+before:
+  hooks:
+    # `go mod tidy` is deliberately not used here: this repo is a workspace of
+    # two modules, and tidying only the root one during a release is misleading.
+    - go mod download
+
 builds:
   - id: merkelbrot
+    # The binary lives in the renderer module, which is separate so that
+    # importing the core never pulls in templ.
     dir: web
     main: ./cmd/merkelbrot
     binary: merkelbrot
     env:
       - CGO_ENABLED=0
-    goos: [linux, darwin, windows]
-    goarch: [amd64, arm64]
+    goos:
+      - windows
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
     ldflags:
-      - -s -w -X main.version={{ .Version }}
+      - -s -w -X main.version={{.Version}}
 
 archives:
   - id: merkelbrot
-    formats: [tar.gz]
+    ids: [merkelbrot]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     format_overrides:
       - goos: windows
         formats: [zip]
@@ -25,24 +39,37 @@ archives:
       - LICENCE
 
 checksum:
-  name_template: checksums.txt
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
 
 changelog:
-  use: github
   sort: asc
   filters:
     exclude:
       - "^docs:"
       - "^test:"
       - "^chore:"
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: danielriddell21
+    name: merkelbrot
+  name_template: "v{{ .Version }}"
 
 brews:
   - name: merkelbrot
     repository:
       owner: danielriddell21
       name: homebrew-tap
+      branch: trunk
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
     homepage: https://github.com/danielriddell21/merkelbrot
-    description: Zoomable, fractal-style visualiser for Merkle DAGs and trees
+    description: "Zoomable, fractal-style visualiser for Merkle DAGs and trees"
     license: MIT
+    commit_msg_template: "Brew formula update for merkelbrot {{ .Tag }}"
+    install: |
+      bin.install "merkelbrot"
     test: |
       system "#{bin}/merkelbrot", "version"

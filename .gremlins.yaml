@@ -1,0 +1,46 @@
+silent: false
+
+unleash:
+  # Per-mutant timeouts are derived from how long the unmutated suite takes. A
+  # warm Go test cache makes that baseline near-instant, at which point every
+  # mutant — which must genuinely recompile — trips the timeout, so the margin
+  # is widened rather than left to depend on cache state.
+  timeout-coefficient: 10
+  threshold:
+    efficacy: 65        # ≥65% of tested mutants must be killed
+    mutant-coverage: 60 # skip mutants in code with <60% line coverage
+  exclude-files:
+    # Demo sources: generators and parsers whose exact output is illustrative
+    # rather than specified, so arithmetic and formatting mutants survive
+    # against tests that assert structure and invariants instead of bytes.
+    - "examples/.*"
+    # Geometry heuristics: the front-chain packing and smallest-enclosing-circle
+    # search are numeric search procedures. The tests assert the properties that
+    # matter — containment, non-overlap, determinism — which many mutants still
+    # satisfy while producing a merely different arrangement.
+    - "layout/pack\\.go"
+    - "layout/enclose\\.go"
+
+mutants:
+  arithmetic-base:
+    enabled: true
+  conditionals-boundary:
+    enabled: true
+  conditionals-negation:
+    enabled: true
+  increment-decrement:
+    enabled: true
+  invert-assignments:
+    enabled: false # generates many equivalent/uncompilable mutants in Go
+  invert-bitwise:
+    enabled: false # bitwise ops are absent from business logic; low signal
+  invert-bwassign:
+    enabled: false # same reason as invert-bitwise
+  invert-negatives:
+    enabled: true
+  invert-logical:
+    enabled: true
+  invert-loopctrl:
+    enabled: false # swapping break/continue can hang the test suite
+  remove-self-assignments:
+    enabled: false # self-assignments are already dead code; mutating them is noise

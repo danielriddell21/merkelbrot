@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: ["trunk"]
+  pull_request:
+    branches: ["trunk"]
+
+jobs:
+  ci:
+    uses: danielriddell21/github-actions/.github/workflows/ci.yaml@v1
+    permissions:
+      contents: write
+    with:
+      vet: true
+      # Both modules: the core, and the templ renderer that lives in its own
+      # module so importing the core never pulls a web dependency in.
+      test-command: go test -coverprofile=coverage.txt ./... ./web/...
+      build-command: go build ./... ./web/...
+    secrets:
+      codecov-token: ${{ secrets.CODECOV_TOKEN }}
+      tag-token: ${{ secrets.MERKELBROT_TOKEN }}

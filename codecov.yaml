@@ -1,0 +1,23 @@
+coverage:
+  precision: 2
+  round: down
+  range: "60...100"
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        target: auto
+        threshold: 1%
+
+ignore:
+  - "web/cmd/merkelbrot/main.go"
+  - "web/internal/readmecheck/"
+  - "examples/"
+
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: true
