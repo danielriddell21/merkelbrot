@@ -139,15 +139,16 @@ func encloseBasis3(a, b, c Circle) Circle {
 	qc := xa*xa + ya*ya - a.R*a.R
 
 	var r float64
-	if math.Abs(qa) > tangentSlack {
+	switch {
+	case math.Abs(qa) > tangentSlack:
 		disc := qb*qb - 4*qa*qc
 		if disc < 0 {
 			disc = 0
 		}
 		r = -((qb + math.Sqrt(disc)) / (2 * qa))
-	} else if qb != 0 {
+	case qb != 0:
 		r = -(qc / qb)
-	} else {
+	default:
 		return encloseBasis2(encloseBasis2(a, b), c)
 	}
 

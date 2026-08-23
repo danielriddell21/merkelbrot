@@ -15,26 +15,13 @@ type flow struct {
 }
 
 func (f flow) dominators() []int {
-	n := len(f.children)
 	order, number := f.reversePostorder()
 
-	idom := make([]int, n)
+	idom := make([]int, len(f.children))
 	for i := range idom {
 		idom[i] = -1
 	}
 	idom[f.start] = f.start
-
-	intersect := func(a, b int) int {
-		for a != b {
-			for number[a] > number[b] {
-				a = idom[a]
-			}
-			for number[b] > number[a] {
-				b = idom[b]
-			}
-		}
-		return a
-	}
 
 	for changed := true; changed; {
 		changed = false
@@ -42,17 +29,7 @@ func (f flow) dominators() []int {
 			if b == f.start {
 				continue
 			}
-			candidate := -1
-			for _, p := range f.preds[b] {
-				if idom[p] == -1 {
-					continue
-				}
-				if candidate == -1 {
-					candidate = p
-				} else {
-					candidate = intersect(p, candidate)
-				}
-			}
+			candidate := f.candidate(b, idom, number)
 			if candidate != -1 && idom[b] != candidate {
 				idom[b] = candidate
 				changed = true
@@ -60,6 +37,37 @@ func (f flow) dominators() []int {
 		}
 	}
 	return idom
+}
+
+// candidate folds b's already-processed predecessors together, which is the
+// running intersection that the iteration drives to a fixed point.
+func (f flow) candidate(b int, idom, number []int) int {
+	found := -1
+	for _, p := range f.preds[b] {
+		if idom[p] == -1 {
+			continue
+		}
+		if found == -1 {
+			found = p
+			continue
+		}
+		found = intersect(p, found, idom, number)
+	}
+	return found
+}
+
+// intersect walks two nodes up the partially built dominator tree until they
+// meet, always advancing whichever sits later in reverse postorder.
+func intersect(a, b int, idom, number []int) int {
+	for a != b {
+		for number[a] > number[b] {
+			a = idom[a]
+		}
+		for number[b] > number[a] {
+			b = idom[b]
+		}
+	}
+	return a
 }
 
 func (f flow) reversePostorder() (order []int, number []int) {

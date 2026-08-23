@@ -87,52 +87,26 @@ func packSiblings(circles []Circle) float64 {
 	next[bi], prev[ai] = ci, ci
 	next[ci], prev[bi] = ai, ai
 
-pack:
 	for i := 3; i < n; i++ {
 		place(circles[ai], circles[bi], &circles[i])
 		ci = i
 
-		// Walk outwards along the chain in both directions, always advancing the
-		// side that has covered the least arc, and rewind on the first collision.
-		j, k := next[bi], prev[ai]
-		sj, sk := circles[bi].R, circles[ai].R
-		for {
-			if sj <= sk {
-				if intersects(circles[j], circles[ci]) {
-					bi = j
-					next[ai], prev[bi] = bi, ai
-					i--
-					continue pack
-				}
-				sj += circles[j].R
-				j = next[j]
+		if node, forward, hit := collide(circles, prev, next, ai, bi, ci); hit {
+			// The new circle overlaps the chain, so the chain is rewound to the
+			// member it hit and the same circle is retried against that pair.
+			if forward {
+				bi = node
 			} else {
-				if intersects(circles[k], circles[ci]) {
-					ai = k
-					next[ai], prev[bi] = bi, ai
-					i--
-					continue pack
-				}
-				sk += circles[k].R
-				k = prev[k]
+				ai = node
 			}
-			if j == next[k] {
-				break
-			}
+			next[ai], prev[bi] = bi, ai
+			i--
+			continue
 		}
 
 		prev[ci], next[ci] = ai, bi
 		next[ai], prev[bi] = ci, ci
-
-		// Re-anchor the chain on the pair now closest to the centroid.
-		bi = ci
-		best := score(circles[ai], circles[next[ai]])
-		for c := next[ci]; c != bi; c = next[c] {
-			if s := score(circles[c], circles[next[c]]); s < best {
-				ai, best = c, s
-			}
-		}
-		bi = next[ai]
+		ai, bi = reanchor(circles, next, ai, ci)
 	}
 
 	chain := []Circle{circles[bi]}
@@ -145,6 +119,44 @@ pack:
 		circles[i].Y -= e.Y
 	}
 	return e.R
+}
+
+// collide walks outwards along the front chain in both directions, always
+// advancing the side that has covered the least arc, and reports the first chain
+// member the new circle overlaps.
+func collide(circles []Circle, prev, next []int, ai, bi, ci int) (node int, forward, hit bool) {
+	j, k := next[bi], prev[ai]
+	sj, sk := circles[bi].R, circles[ai].R
+	for {
+		if sj <= sk {
+			if intersects(circles[j], circles[ci]) {
+				return j, true, true
+			}
+			sj += circles[j].R
+			j = next[j]
+		} else {
+			if intersects(circles[k], circles[ci]) {
+				return k, false, true
+			}
+			sk += circles[k].R
+			k = prev[k]
+		}
+		if j == next[k] {
+			return 0, false, false
+		}
+	}
+}
+
+// reanchor moves the chain's active pair to whichever adjacent pair now sits
+// closest to the centroid, which is what keeps the packing tight.
+func reanchor(circles []Circle, next []int, ai, ci int) (int, int) {
+	best, bestScore := ai, score(circles[ai], circles[next[ai]])
+	for c := next[ci]; c != ci; c = next[c] {
+		if s := score(circles[c], circles[next[c]]); s < bestScore {
+			best, bestScore = c, s
+		}
+	}
+	return best, next[best]
 }
 
 // Equal circles packed into a unit disc is how a node's payload fields are laid

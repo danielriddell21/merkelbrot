@@ -149,191 +149,256 @@ type Packing[K comparable] struct {
 // renderer can draw them in order and have children land on top of their
 // containers.
 func Pack[K comparable](g *graph.Graph[K], opts Options) *Packing[K] {
-	opts = opts.withDefaults()
+	p := newPacker(g, opts.withDefaults())
+	if p == nil {
+		return &Packing[K]{}
+	}
+	p.contain()
+	p.prune()
+	p.size()
+	return p.place()
+}
 
+// packer carries the working state of a single [Pack] call between its phases:
+// build the flow graph, derive the containment tree, size every disc bottom-up,
+// then walk down assigning absolute positions.
+type packer[K comparable] struct {
+	g     *graph.Graph[K]
+	opts  Options
+	ids   []K
+	index map[K]int
+	n     int
+	start int
+
+	f       flow
+	idom    []int
+	rank    []int
+	domKids [][]int
+	depth   []int
+	include []bool
+
+	radius  []float64
+	offsets [][]Circle
+	// area is where a node's payload fields live, relative to the node's centre
+	// and in units of its radius. A node holding both children and fields packs
+	// the fields into a disc of their own so the two never overlap.
+	area      []Circle
+	unitCache map[int][]Circle
+}
+
+func newPacker[K comparable](g *graph.Graph[K], opts Options) *packer[K] {
 	ids := make([]K, 0, g.Len())
 	index := make(map[K]int, g.Len())
 	for id := range g.IDs() {
 		index[id] = len(ids)
 		ids = append(ids, id)
 	}
+	if len(ids) == 0 {
+		return nil
+	}
+
 	n := len(ids)
-	if n == 0 {
-		return &Packing[K]{}
+	p := &packer[K]{
+		g:         g,
+		opts:      opts,
+		ids:       ids,
+		index:     index,
+		n:         n,
+		start:     n,
+		unitCache: make(map[int][]Circle),
 	}
 
 	// A virtual start node parents every root, which gives the dominator search a
 	// single entry point even when the graph has several roots.
-	start := n
-	f := flow{
-		start:    start,
+	p.f = flow{
+		start:    p.start,
 		children: make([][]int, n+1),
 		preds:    make([][]int, n+1),
 	}
 	for i, id := range ids {
 		for child := range g.Children(id) {
 			c := index[child]
-			f.children[i] = append(f.children[i], c)
-			f.preds[c] = append(f.preds[c], i)
+			p.f.children[i] = append(p.f.children[i], c)
+			p.f.preds[c] = append(p.f.preds[c], i)
 		}
 	}
 	for root := range g.Roots() {
 		r := index[root]
-		f.children[start] = append(f.children[start], r)
-		f.preds[r] = append(f.preds[r], start)
+		p.f.children[p.start] = append(p.f.children[p.start], r)
+		p.f.preds[r] = append(p.f.preds[r], p.start)
 	}
+	return p
+}
 
-	idom := f.dominators()
-	domKids := make([][]int, n+1)
-	for i := range n {
-		if p := idom[i]; p >= 0 && p != i {
-			domKids[p] = append(domKids[p], i)
+func (p *packer[K]) contain() {
+	p.idom = p.f.dominators()
+	p.domKids = make([][]int, p.n+1)
+	for i := range p.n {
+		if parent := p.idom[i]; parent >= 0 && parent != i {
+			p.domKids[parent] = append(p.domKids[parent], i)
 		}
 	}
 
 	// Siblings are ordered by breadth-first rank rather than by the graph's own
 	// discovery order, so discs appear in the order the source declared its
 	// children instead of in the order a depth-first walk happened to reach them.
-	rank := breadthFirstRank(f, n)
-	for _, kids := range domKids {
-		slices.SortFunc(kids, func(a, b int) int { return rank[a] - rank[b] })
+	p.rank = breadthFirstRank(p.f, p.n)
+	for _, kids := range p.domKids {
+		slices.SortFunc(kids, func(a, b int) int { return p.rank[a] - p.rank[b] })
 	}
+}
 
-	depth := make([]int, n+1)
-	include := make([]bool, n+1)
-	include[start] = true
-	depth[start] = -1
-	for queue := []int{start}; len(queue) > 0; {
+func (p *packer[K]) prune() {
+	p.depth = make([]int, p.n+1)
+	p.include = make([]bool, p.n+1)
+	p.include[p.start] = true
+	p.depth[p.start] = -1
+
+	for queue := []int{p.start}; len(queue) > 0; {
 		cur := queue[0]
 		queue = queue[1:]
-		for _, kid := range domKids[cur] {
-			depth[kid] = depth[cur] + 1
-			if opts.MaxDepth > 0 && depth[kid] >= opts.MaxDepth {
+		for _, kid := range p.domKids[cur] {
+			p.depth[kid] = p.depth[cur] + 1
+			if p.opts.MaxDepth > 0 && p.depth[kid] >= p.opts.MaxDepth {
 				continue
 			}
-			include[kid] = true
+			p.include[kid] = true
 			queue = append(queue, kid)
 		}
 	}
-	for i := range n {
-		if !include[i] {
-			domKids[idom[i]] = removeInt(domKids[idom[i]], i)
+	for i := range p.n {
+		if !p.include[i] {
+			p.domKids[p.idom[i]] = removeInt(p.domKids[p.idom[i]], i)
 		}
 	}
+}
 
-	unitCache := make(map[int][]Circle)
-	radius := make([]float64, n+1)
-	offsets := make([][]Circle, n+1)
-	// area is where a node's payload fields live, relative to the node's centre
-	// and in units of its radius. A node holding both children and fields packs
-	// the fields into a disc of their own so the two never overlap.
-	area := make([]Circle, n+1)
-	for _, v := range postorder(domKids, start) {
-		kids := domKids[v]
-		fields := payloadCount(g, ids, v, start)
+func (p *packer[K]) size() {
+	p.radius = make([]float64, p.n+1)
+	p.offsets = make([][]Circle, p.n+1)
+	p.area = make([]Circle, p.n+1)
+
+	for _, v := range postorder(p.domKids, p.start) {
+		kids := p.domKids[v]
+		fields := payloadCount(p.g, p.ids, v, p.start)
 
 		if len(kids) == 0 {
-			radius[v] = leafRadius(g, ids, v, start, opts)
-			area[v] = Circle{R: opts.PayloadFill}
+			p.radius[v] = leafRadius(p.g, p.ids, v, p.start, p.opts)
+			p.area[v] = Circle{R: p.opts.PayloadFill}
 			continue
 		}
 
 		circles := make([]Circle, len(kids), len(kids)+1)
 		for i, kid := range kids {
-			circles[i].R = radius[kid]
+			circles[i].R = p.radius[kid]
 		}
 		if fields > 0 {
-			circles = append(circles, Circle{R: payloadRadius(fields, opts)})
+			circles = append(circles, Circle{R: payloadRadius(fields, p.opts)})
 		}
-		radius[v] = packSiblings(circles)
+
+		p.radius[v] = packSiblings(circles)
 		// The virtual start is not drawn, so padding it would leave a dead ring
 		// around the whole packing and shrink the useful zoom range.
-		if v != start {
-			radius[v] += opts.Padding
+		if v != p.start {
+			p.radius[v] += p.opts.Padding
 		}
-		offsets[v] = circles[:len(kids)]
-		if fields > 0 && radius[v] > 0 {
-			slot := circles[len(kids)]
-			area[v] = Circle{
-				X: slot.X / radius[v],
-				Y: slot.Y / radius[v],
-				R: slot.R / radius[v] * opts.PayloadFill,
-			}
+		p.offsets[v] = circles[:len(kids)]
+		if fields > 0 && p.radius[v] > 0 {
+			p.area[v] = p.payloadArea(circles[len(kids)], p.radius[v])
 		}
 	}
+}
 
-	centre := make([]Circle, n+1)
-	centre[start] = Circle{R: radius[start]}
-	out := &Packing[K]{Bounds: centre[start]}
-	for queue := []int{start}; len(queue) > 0; {
+func (p *packer[K]) payloadArea(slot Circle, radius float64) Circle {
+	return Circle{
+		X: slot.X / radius,
+		Y: slot.Y / radius,
+		R: slot.R / radius * p.opts.PayloadFill,
+	}
+}
+
+func (p *packer[K]) place() *Packing[K] {
+	centre := make([]Circle, p.n+1)
+	centre[p.start] = Circle{R: p.radius[p.start]}
+	out := &Packing[K]{Bounds: centre[p.start]}
+
+	for queue := []int{p.start}; len(queue) > 0; {
 		cur := queue[0]
 		queue = queue[1:]
-		for i, kid := range domKids[cur] {
+		for i, kid := range p.domKids[cur] {
 			centre[kid] = Circle{
-				X: centre[cur].X + offsets[cur][i].X,
-				Y: centre[cur].Y + offsets[cur][i].Y,
-				R: radius[kid],
+				X: centre[cur].X + p.offsets[cur][i].X,
+				Y: centre[cur].Y + p.offsets[cur][i].Y,
+				R: p.radius[kid],
 			}
-			out.Nodes = append(out.Nodes, placed(g, ids, kid, cur, start, depth[kid], centre[kid], len(domKids[kid]) == 0, area[kid], opts, unitCache))
+			out.Nodes = append(out.Nodes, p.placed(kid, cur, centre[kid]))
 			queue = append(queue, kid)
 		}
 	}
 
-	byRank := make([]int, n)
-	for i := range n {
-		byRank[i] = i
-	}
-	slices.SortFunc(byRank, func(a, b int) int { return rank[a] - rank[b] })
-	for _, i := range byRank {
-		if !include[i] {
-			continue
-		}
-		for child := range g.Children(ids[i]) {
-			c := index[child]
-			if include[c] && idom[c] != i {
-				out.Links = append(out.Links, Link[K]{From: ids[i], To: child})
-			}
-		}
-	}
+	out.Links = p.links()
 	return out
 }
 
-func placed[K comparable](g *graph.Graph[K], ids []K, v, parent, start int, depth int, c Circle, leaf bool, area Circle, opts Options, unitCache map[int][]Circle) Placed[K] {
-	id := ids[v]
-	n, _ := g.Node(id)
-	p := Placed[K]{
+func (p *packer[K]) links() []Link[K] {
+	byRank := make([]int, p.n)
+	for i := range p.n {
+		byRank[i] = i
+	}
+	slices.SortFunc(byRank, func(a, b int) int { return p.rank[a] - p.rank[b] })
+
+	var links []Link[K]
+	for _, i := range byRank {
+		if !p.include[i] {
+			continue
+		}
+		for child := range p.g.Children(p.ids[i]) {
+			if c := p.index[child]; p.include[c] && p.idom[c] != i {
+				links = append(links, Link[K]{From: p.ids[i], To: child})
+			}
+		}
+	}
+	return links
+}
+
+func (p *packer[K]) placed(v, parent int, c Circle) Placed[K] {
+	id := p.ids[v]
+	n, _ := p.g.Node(id)
+	out := Placed[K]{
 		Circle: c,
 		ID:     id,
 		Kind:   n.Kind,
 		Label:  n.Label,
 		Hash:   n.Hash,
-		Depth:  depth,
-		Leaf:   leaf,
+		Depth:  p.depth[v],
+		Leaf:   len(p.domKids[v]) == 0,
+		Shared: countAtLeastTwo(p.g, id),
 	}
-	if parent != start {
-		p.Parent, p.HasParent = ids[parent], true
+	if parent != p.start {
+		out.Parent, out.HasParent = p.ids[parent], true
 	}
-	p.Shared = countAtLeastTwo(g, id)
+	if len(n.Payload) == 0 {
+		return out
+	}
 
-	if len(n.Payload) > 0 {
-		unit, ok := unitCache[len(n.Payload)]
-		if !ok {
-			unit = packUnit(len(n.Payload))
-			unitCache[len(n.Payload)] = unit
-		}
-		p.Payload = make([]Slot, len(n.Payload))
-		for i, field := range n.Payload {
-			p.Payload[i] = Slot{
-				Circle: Circle{
-					X: area.X + unit[i].X*area.R,
-					Y: area.Y + unit[i].Y*area.R,
-					R: unit[i].R * area.R,
-				},
-				Field: field,
-			}
+	unit, ok := p.unitCache[len(n.Payload)]
+	if !ok {
+		unit = packUnit(len(n.Payload))
+		p.unitCache[len(n.Payload)] = unit
+	}
+	area := p.area[v]
+	out.Payload = make([]Slot, len(n.Payload))
+	for i, field := range n.Payload {
+		out.Payload[i] = Slot{
+			Circle: Circle{
+				X: area.X + unit[i].X*area.R,
+				Y: area.Y + unit[i].Y*area.R,
+				R: unit[i].R * area.R,
+			},
+			Field: field,
 		}
 	}
-	return p
+	return out
 }
 
 func countAtLeastTwo[K comparable](g *graph.Graph[K], id K) bool {
