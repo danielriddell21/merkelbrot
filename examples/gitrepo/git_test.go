@@ -307,3 +307,61 @@ func TestReadsThisRepository(t *testing.T) {
 		}
 	}
 }
+
+// TestShallowCloneStopsAtTheOldestPresentCommit covers the checkout CI actually
+// performs: a commit that names a parent the repository does not carry.
+func TestShallowCloneStopsAtTheOldestPresentCommit(t *testing.T) {
+	r := newRepo(t)
+	blob := r.blob("hello\n")
+	tree := r.tree(entry{"100644", "hello.txt", blob})
+	// The parent is a plausible object name that was never written.
+	head := r.commit(tree, "only commit", "0123456789abcdef0123456789abcdef01234567")
+	r.setHead(head)
+
+	src, err := gitrepo.Open(filepath.Dir(r.dir), gitrepo.Config{})
+	if err != nil {
+		t.Fatalf("Open on a shallow clone: %v", err)
+	}
+	g, err := graph.New(src)
+	if err != nil {
+		t.Fatalf("graph.New: %v", err)
+	}
+	if got, want := g.Len(), 3; got != want {
+		t.Errorf("Len() = %d, want %d", got, want)
+	}
+	for child := range g.Children(head) {
+		n, _ := g.Node(child)
+		if n.Kind == "commit" {
+			t.Errorf("head points at commit %s, want the missing parent to be dropped", child)
+		}
+	}
+}
+
+// TestPartialCloneSkipsFilteredEntries covers a tree naming a blob that a
+// blobless clone never fetched.
+func TestPartialCloneSkipsFilteredEntries(t *testing.T) {
+	r := newRepo(t)
+	present := r.blob("here\n")
+	tree := r.tree(
+		entry{"100644", "here.txt", present},
+		entry{"100644", "gone.txt", "89abcdef0123456789abcdef0123456789abcdef"},
+	)
+	head := r.commit(tree, "partial")
+	r.setHead(head)
+
+	src, err := gitrepo.Open(filepath.Dir(r.dir), gitrepo.Config{})
+	if err != nil {
+		t.Fatalf("Open on a partial clone: %v", err)
+	}
+	g, err := graph.New(src)
+	if err != nil {
+		t.Fatalf("graph.New: %v", err)
+	}
+	if got, want := g.Len(), 3; got != want {
+		t.Errorf("Len() = %d, want %d", got, want)
+	}
+	n, _ := g.Node(tree)
+	if got, want := len(n.Children), 1; got != want {
+		t.Errorf("tree has %d entries, want %d", got, want)
+	}
+}

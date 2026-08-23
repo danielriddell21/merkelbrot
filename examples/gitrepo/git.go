@@ -12,6 +12,13 @@ Objects are read with the standard library alone. Loose objects are zlib streams
 under .git/objects, and packed objects are resolved through the version 2 pack
 index, including both offset and reference deltas.
 
+# Incomplete checkouts
+
+Shallow and partial clones are common — a CI checkout is usually one commit deep —
+and they reference objects the repository does not hold. Rather than failing,
+anything absent is left out: a truncated history simply stops at its oldest
+present commit, and a filtered tree omits the entries it cannot resolve.
+
 # Naming
 
 A git blob has no name of its own; names live in the trees that point at it. A
@@ -216,8 +223,10 @@ func (s *Source) walk(head string, maxCommits int) error {
 		children := make([]string, 0, len(c.parents)+1)
 		withinLimit := maxCommits == 0 || commits < maxCommits
 		for _, parent := range c.parents {
-			if !withinLimit {
-				break
+			// A shallow clone names parents it does not carry, so the history has
+			// to stop wherever the objects run out.
+			if !withinLimit || !s.has(parent) {
+				continue
 			}
 			children = append(children, parent)
 			if !seen[parent] {
@@ -273,6 +282,10 @@ func (s *Source) readTree(sha, name string) error {
 	children := make([]string, 0, len(entries))
 	var dirs, files int
 	for _, e := range entries {
+		if _, known := s.nodes[e.sha]; !known && !s.has(e.sha) {
+			// A partial clone can filter objects out entirely.
+			continue
+		}
 		if _, known := s.nodes[e.sha]; !known {
 			if e.dir() {
 				if err := s.readTree(e.sha, e.name); err != nil {
@@ -423,6 +436,21 @@ func parseTree(data []byte) ([]treeEntry, error) {
 		data = data[zero+21:]
 	}
 	return entries, nil
+}
+
+func (s *Source) has(sha string) bool {
+	if len(sha) < 3 {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(s.dir, "objects", sha[:2], sha[2:])); err == nil {
+		return true
+	}
+	for _, p := range s.packs {
+		if _, ok := p.find(sha); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Source) object(sha string) (string, []byte, error) {
