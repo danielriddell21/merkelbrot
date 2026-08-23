@@ -17,8 +17,10 @@ func main() {
 	src := graph.NewMemorySource([]string{"commit"},
 		graph.Node[string]{ID: "commit", Kind: "commit", Label: "initial", Children: []string{"tree"}},
 		graph.Node[string]{ID: "tree", Kind: "tree", Label: "/", Children: []string{"readme"}},
-		graph.Node[string]{ID: "readme", Kind: "blob", Label: "README.md",
-			Payload: []graph.Field{{Key: "size", Value: "184 B"}}},
+		graph.Node[string]{
+			ID: "readme", Kind: "blob", Label: "README.md",
+			Payload: []graph.Field{{Key: "size", Value: "184 B"}},
+		},
 	)
 
 	g, err := graph.New(src)

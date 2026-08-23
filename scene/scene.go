@@ -277,5 +277,8 @@ func (s *Scene) Add(highlights ...Highlight) {
 
 // WriteJSON writes the scene as compact JSON.
 func (s *Scene) WriteJSON(w io.Writer) error {
-	return json.NewEncoder(w).Encode(s)
+	if err := json.NewEncoder(w).Encode(s); err != nil {
+		return fmt.Errorf("scene: encoding: %w", err)
+	}
+	return nil
 }

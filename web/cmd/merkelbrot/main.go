@@ -75,28 +75,34 @@ func run(args []string) error {
 
 	switch args[0] {
 	case "serve":
-		if err := fs.Parse(args[1:]); err != nil {
+		if err := parse(fs, args); err != nil {
 			return err
 		}
 		return serve(&opts)
 	case "export":
-		if err := fs.Parse(args[1:]); err != nil {
+		if err := parse(fs, args); err != nil {
 			return err
 		}
 		s, err := build(&opts)
 		if err != nil {
 			return err
 		}
-		return web.Render(context.Background(), os.Stdout, s)
+		if err := web.Render(context.Background(), os.Stdout, s); err != nil {
+			return fmt.Errorf("rendering page: %w", err)
+		}
+		return nil
 	case "scene":
-		if err := fs.Parse(args[1:]); err != nil {
+		if err := parse(fs, args); err != nil {
 			return err
 		}
 		s, err := build(&opts)
 		if err != nil {
 			return err
 		}
-		return s.WriteJSON(os.Stdout)
+		if err := s.WriteJSON(os.Stdout); err != nil {
+			return fmt.Errorf("writing scene: %w", err)
+		}
+		return nil
 	case "version", "-v", "--version":
 		fmt.Println("merkelbrot", version)
 		return nil
@@ -107,6 +113,13 @@ func run(args []string) error {
 		usage()
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func parse(fs *flag.FlagSet, args []string) error {
+	if err := fs.Parse(args[1:]); err != nil {
+		return fmt.Errorf("parsing flags: %w", err)
+	}
+	return nil
 }
 
 func usage() {
@@ -135,7 +148,7 @@ func build(o *options) (*scene.Scene, error) {
 	case "git":
 		repo, err := gitrepo.Open(o.repo, gitrepo.Config{MaxCommits: o.count})
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("reading repository: %w", err)
 		}
 		src = repo
 		title = "git objects: " + o.repo
@@ -168,7 +181,8 @@ func serve(o *options) error {
 		return err
 	}
 
-	listener, err := net.Listen("tcp", o.addr)
+	var lc net.ListenConfig
+	listener, err := lc.Listen(context.Background(), "tcp", o.addr)
 	if err != nil {
 		return fmt.Errorf("listening on %s: %w", o.addr, err)
 	}
@@ -179,7 +193,7 @@ func serve(o *options) error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+		return fmt.Errorf("serving: %w", err)
 	}
 	return nil
 }

@@ -70,7 +70,11 @@ func Render(ctx context.Context, w io.Writer, s *scene.Scene) error {
 	if title == "" {
 		title = "merkelbrot"
 	}
-	return page(title, s, string(data), mustAsset("merkelbrot.css"), mustAsset("merkelbrot.js")).Render(ctx, w)
+	page := page(title, s, string(data), mustAsset("merkelbrot.css"), mustAsset("merkelbrot.js"))
+	if err := page.Render(ctx, w); err != nil {
+		return fmt.Errorf("web: rendering page: %w", err)
+	}
+	return nil
 }
 
 // Handler serves the viewer for a scene.
