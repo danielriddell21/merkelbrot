@@ -1,0 +1,48 @@
+version: 2
+
+project_name: merkelbrot
+
+builds:
+  - id: merkelbrot
+    dir: web
+    main: ./cmd/merkelbrot
+    binary: merkelbrot
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: merkelbrot
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENCE
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+brews:
+  - name: merkelbrot
+    repository:
+      owner: danielriddell21
+      name: homebrew-tap
+    homepage: https://github.com/danielriddell21/merkelbrot
+    description: Zoomable, fractal-style visualiser for Merkle DAGs and trees
+    license: MIT
+    test: |
+      system "#{bin}/merkelbrot", "version"

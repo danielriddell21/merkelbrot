@@ -5,6 +5,7 @@
 //	merkelbrot serve  [flags]   start the viewer on a local address
 //	merkelbrot export [flags]   write a self-contained HTML page to stdout
 //	merkelbrot scene  [flags]   write the scene as JSON to stdout
+//	merkelbrot version          print the build version
 //
 // Sources are a generated UK payments ledger, a generated content-addressed
 // Merkle DAG, or the object graph of a real git repository. Run with -h for the
@@ -31,6 +32,9 @@ import (
 	"github.com/danielriddell21/merkelbrot/scene"
 	"github.com/danielriddell21/merkelbrot/web"
 )
+
+// version is set by the release build.
+var version = "dev"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -93,6 +97,9 @@ func run(args []string) error {
 			return err
 		}
 		return s.WriteJSON(os.Stdout)
+	case "version", "-v", "--version":
+		fmt.Println("merkelbrot", version)
+		return nil
 	case "-h", "--help", "help":
 		usage()
 		return nil
@@ -109,6 +116,7 @@ Usage:
   merkelbrot serve  [flags]   start the viewer on a local address
   merkelbrot export [flags]   write a self-contained HTML page to stdout
   merkelbrot scene  [flags]   write the scene as JSON to stdout
+  merkelbrot version          print the build version
 
 Run "merkelbrot serve -h" for the available flags.
 `)
