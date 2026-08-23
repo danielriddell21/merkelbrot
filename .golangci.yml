@@ -3,25 +3,82 @@ version: "2"
 linters:
   default: standard
   enable:
+    - dupl
+    - cyclop
+    - errorlint
+    - gocognit
+    - gocritic
+    - gosec
     - misspell
+    - nilerr
+    - noctx
+    - prealloc
     - revive
+    - thelper
+    - unconvert
+    - unparam
+    - whitespace
+    - wrapcheck
   settings:
-    misspell:
-      locale: UK
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+        - shadow
+    cyclop:
+      max-complexity: 15
+    gocognit:
+      min-complexity: 20
     revive:
       rules:
         - name: exported
-          arguments:
-            - disableStutteringCheck
+          arguments: [disableStutteringCheck]
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+    gosec:
+      excludes:
+        - G107
+        - G115
+        - G204
+        - G304
+        - G404
+        - G602
+        - G703
   exclusions:
-    presets:
-      - comments
-      - std-error-handling
+    paths:
+      - examples
     rules:
-      - path: _test\.go
+      - path: "tests/web/"
         linters:
+          - noctx
+      - path: (^|/)(internal|cmd)/
+        linters:
+          - revive
+      - path: "_test\\.go"
+        linters:
+          - revive
+          - dupl
+          - wrapcheck
+          - gosec
+          - unparam
+          - gocognit
+          - cyclop
+          - prealloc
           - errcheck
+          - gocritic
+          - noctx
 
 formatters:
   enable:
-    - gofmt
+    - gofumpt
+    - goimports
+  exclusions:
+    paths:
+      - examples
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/danielriddell21/merkelbrot
