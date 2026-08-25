@@ -7,6 +7,7 @@
 <p align="center">
   <a href="https://pkg.go.dev/github.com/danielriddell21/merkelbrot"><img src="https://pkg.go.dev/badge/github.com/danielriddell21/merkelbrot.svg" alt="Go reference"></a>
   <a href="https://github.com/danielriddell21/merkelbrot/actions/workflows/ci.yaml"><img src="https://github.com/danielriddell21/merkelbrot/actions/workflows/ci.yaml/badge.svg" alt="CI"></a>
+  <a href="https://sonarcloud.io/summary/new_code?id=danielriddell21_merkelbrot"><img src="https://sonarcloud.io/api/project_badges/measure?project=danielriddell21_merkelbrot&metric=alert_status" alt="Quality gate status"></a>
   <a href="https://goreportcard.com/report/github.com/danielriddell21/merkelbrot"><img src="https://goreportcard.com/badge/github.com/danielriddell21/merkelbrot" alt="Go report card"></a>
   <a href="LICENCE"><img src="https://img.shields.io/badge/licence-MIT-blue.svg" alt="MIT licence"></a>
 </p>
