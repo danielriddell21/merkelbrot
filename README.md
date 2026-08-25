@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://pkg.go.dev/github.com/danielriddell21/merkelbrot"><img src="https://pkg.go.dev/badge/github.com/danielriddell21/merkelbrot.svg" alt="Go reference"></a>
-  <a href="https://github.com/danielriddell21/merkelbrot/actions/workflows/ci.yml"><img src="https://github.com/danielriddell21/merkelbrot/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/danielriddell21/merkelbrot/actions/workflows/ci.yaml"><img src="https://github.com/danielriddell21/merkelbrot/actions/workflows/ci.yaml/badge.svg" alt="CI"></a>
   <a href="https://goreportcard.com/report/github.com/danielriddell21/merkelbrot"><img src="https://goreportcard.com/badge/github.com/danielriddell21/merkelbrot" alt="Go report card"></a>
   <a href="LICENCE"><img src="https://img.shields.io/badge/licence-MIT-blue.svg" alt="MIT licence"></a>
 </p>
