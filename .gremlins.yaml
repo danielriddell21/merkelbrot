@@ -20,6 +20,10 @@ unleash:
     # satisfy while producing a merely different arrangement.
     - "layout/pack\\.go"
     - "layout/enclose\\.go"
+    # The renderer and its CLI are a separate module with their own tests, which
+    # this module's `go test ./...` never runs. Left in, every one of their
+    # mutants counts as uncovered and drags mutant coverage toward the floor.
+    - "web/.*"
 
 mutants:
   arithmetic-base:
