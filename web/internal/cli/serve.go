@@ -1,0 +1,50 @@
+package cli
+
+import (
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"github.com/danielriddell21/merkelbrot/web"
+)
+
+func serveCmd(opts *options) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "serve",
+		Short: "Serve the viewer on a local address",
+		Long: `Serve the viewer over HTTP.
+
+GET / returns the page and GET /scene.json returns the scene as JSON, for
+anything that would rather read the data than the picture.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			s, err := opts.build()
+			if err != nil {
+				return err
+			}
+
+			var lc net.ListenConfig
+			listener, err := lc.Listen(cmd.Context(), "tcp", opts.addr)
+			if err != nil {
+				return fmt.Errorf("listening on %s: %w", opts.addr, err)
+			}
+			fmt.Fprintf(cmd.ErrOrStderr(), "merkelbrot: %d nodes on http://%s\n", s.Stats.Nodes, listener.Addr())
+
+			srv := &http.Server{
+				Handler:           web.Handler(s),
+				ReadHeaderTimeout: 5 * time.Second,
+			}
+			if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return fmt.Errorf("serving: %w", err)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&opts.addr, "addr", "127.0.0.1:8080", "address to listen on")
+	return cmd
+}

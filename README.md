@@ -77,9 +77,9 @@ can consume it instead.
 ## Demo
 
 ```sh
-merkelbrot serve -source git -repo .        # this repository's own object graph
-merkelbrot serve -source ledger -n 24       # a generated UK payments ledger
-merkelbrot export -source synthetic > x.html
+merkelbrot serve --source git --repo .        # this repository's own object graph
+merkelbrot serve --source ledger -n 24        # a generated UK payments ledger
+merkelbrot export --source synthetic > x.html
 ```
 
 The sources under [`examples/`](examples) double as reference implementations of

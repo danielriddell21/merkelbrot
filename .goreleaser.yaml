@@ -72,4 +72,4 @@ brews:
     install: |
       bin.install "merkelbrot"
     test: |
-      system "#{bin}/merkelbrot", "version"
+      system "#{bin}/merkelbrot", "--version"
