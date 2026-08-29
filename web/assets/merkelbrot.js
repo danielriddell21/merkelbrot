@@ -24,6 +24,9 @@
 	var MIN_FIELD = 9;
 	var MIN_FIELD_TEXT = 24;
 	var MIN_LINK = 2.5;
+	// The radius at which a link's ends are big enough for the link to be drawn at
+	// full strength.
+	var MIN_LINK_CLEAR = 20;
 	var MIN_RIBBON = 34;
 	var MIN_SPOKES = 58;
 	var MIN_DERIVED = 70;
@@ -317,7 +320,24 @@
 	// node's own digest, joined to each child it commits to. Containment alone says
 	// only that these things are nested; the spokes say the parent's hash is made
 	// of theirs, which is what distinguishes a Merkle DAG from any other hierarchy.
+	// The link of a chain a node is built around, or null: the one child that shares
+	// its centre. Its presence means the node is drawn as a ring rather than as a
+	// packing, which changes what else is worth drawing inside it.
+	function coreOf(node, kids) {
+		for (var i = 0; i < kids.length; i++) {
+			var k = kids[i];
+			if (k.kind === node.kind && k.x === node.x && k.y === node.y) return k;
+		}
+		return null;
+	}
+
 	function drawSpokes(node, sx, sy, r, colour, kids) {
+		// Spokes exist to show which discs belong to which parent where the packing
+		// alone does not say so. A ring already says it — its contents are arranged
+		// around the link they were added to — and spokes there are long lines drawn
+		// across the whole disc for nothing.
+		if (coreOf(node, kids)) return;
+
 		// A child nearly as large as its parent is a chain link — the previous
 		// commit or transaction nested inside this one. Containment already reads
 		// clearly there, and a spoke to its centre is just a long line across
@@ -475,6 +495,19 @@
 		ctx.stroke();
 	}
 
+	// A reference is only worth drawing once you can see what it joins. Below a few
+	// pixels its ends are dots, and a few hundred of them together are a haze over
+	// the whole picture rather than information, so a link fades in with the
+	// smaller of the two discs it connects. Pointing at a node lifts its own links
+	// clear of that haze and pushes the rest further into it.
+	function linkAlpha(a, b, lit) {
+		if (lit) return 0.7;
+		var small = Math.min(a.r, b.r);
+		if (small < MIN_LINK) return 0;
+		var t = Math.min(1, (small - MIN_LINK) / (MIN_LINK_CLEAR - MIN_LINK));
+		return 0.2 * t * t * (hovered ? 0.3 : 1);
+	}
+
 	function drawLinks(visible) {
 		if (!scene.links.length) return;
 		var shown = new Map();
@@ -486,9 +519,11 @@
 			var a = shown.get(l.from);
 			var b = shown.get(l.to);
 			if (!a || !b) continue;
-			if (a.r < MIN_LINK || b.r < MIN_LINK) continue;
 
 			var mark = markedLinks.get(l.from + " " + l.to);
+			var lit = hovered && (l.from === hovered.id || l.to === hovered.id);
+			var alpha = mark ? 1 : linkAlpha(a, b, lit);
+			if (alpha < 0.012) continue;
 			var dx = b.sx - a.sx, dy = b.sy - a.sy;
 			var dist = Math.hypot(dx, dy);
 			if (dist < 1) continue;
@@ -501,9 +536,9 @@
 			ctx.beginPath();
 			ctx.moveTo(a.sx, a.sy);
 			ctx.quadraticCurveTo(mx, my, b.sx, b.sy);
-			ctx.lineWidth = mark ? 2 : 0.8;
+			ctx.lineWidth = mark ? 2 : (lit ? 1.6 : 0.8);
 			ctx.setLineDash(mark ? [] : [3, 5]);
-			ctx.strokeStyle = mark ? MARKS[mark] : ink(0.16);
+			ctx.strokeStyle = mark ? MARKS[mark] : ink(alpha);
 			ctx.stroke();
 		}
 		ctx.restore();
@@ -752,6 +787,9 @@
 		if (hit !== hovered) {
 			hovered = hit;
 			if (!focused) showCrumb(hit);
+			// The links belonging to the node under the pointer are drawn differently
+			// from the rest, so a change of node is a change of picture.
+			draw();
 		}
 	});
 
