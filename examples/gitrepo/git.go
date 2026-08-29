@@ -340,6 +340,9 @@ func (s *Source) readBlob(e treeEntry) error {
 		Hash:  mustHex(e.sha),
 		Kind:  "blob",
 		Label: e.name,
+		// A file is drawn in proportion to what is in it, compressed so that a
+		// megabyte of test data does not reduce the source it tests to a dot.
+		Weight: graph.Weigh(float64(len(data)), 512),
 		Payload: []graph.Field{
 			{Key: "blob", Value: short(e.sha)},
 			{Key: "size", Value: humanBytes(len(data))},

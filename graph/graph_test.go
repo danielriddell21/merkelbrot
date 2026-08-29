@@ -3,6 +3,7 @@ package graph_test
 import (
 	"errors"
 	"iter"
+	"math"
 	"slices"
 	"testing"
 
@@ -204,5 +205,33 @@ func TestDuplicateRootsCollapse(t *testing.T) {
 	}
 	if got, want := slices.Collect(g.Roots()), []string{"a"}; !slices.Equal(got, want) {
 		t.Errorf("Roots() = %v, want %v", got, want)
+	}
+}
+
+func TestWeighKeepsOrderAndCompressesTheRange(t *testing.T) {
+	sizes := []float64{0, 64, 512, 4096, 65536, 1 << 20}
+	var last float64
+	for _, size := range sizes {
+		w := graph.Weigh(size, 512)
+		if w < last {
+			t.Errorf("Weigh(%g) = %g, less than the weight of a smaller quantity (%g)", size, w, last)
+		}
+		last = w
+	}
+
+	// Radius grows with the square root of weight, so that is what has to stay
+	// within a sane range across four orders of magnitude.
+	small := math.Sqrt(graph.Weigh(64, 512))
+	big := math.Sqrt(graph.Weigh(1<<20, 512))
+	if ratio := big / small; ratio > 4 {
+		t.Errorf("a megabyte draws %.1f times the radius of 64 bytes, want the range compressed", ratio)
+	}
+}
+
+func TestWeighTreatsNothingAsTheMinimum(t *testing.T) {
+	for _, tc := range []struct{ quantity, unit float64 }{{0, 512}, {-1, 512}, {100, 0}, {100, -1}} {
+		if got := graph.Weigh(tc.quantity, tc.unit); got != 1 {
+			t.Errorf("Weigh(%g, %g) = %g, want 1", tc.quantity, tc.unit, got)
+		}
 	}
 }

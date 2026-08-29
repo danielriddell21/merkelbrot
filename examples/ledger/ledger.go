@@ -332,7 +332,15 @@ func (s *Source) entry(e entry) string {
 		accounts = append(accounts, l.side+" "+l.account.code)
 	}
 	label := fmt.Sprintf("%s %s (%s)", e.narrative, formatPence(debits), strings.Join(accounts, ", "))
-	return s.put("entry", label, nil, payload)
+	id := s.put("entry", label, nil, payload)
+
+	// An entry is drawn in proportion to the money it moves, on a scale where a
+	// pound is one step, so a large payment reads as larger without a small one
+	// vanishing beside it.
+	n := s.nodes[id]
+	n.Weight = graph.Weigh(float64(debits), 100)
+	s.nodes[id] = n
+	return id
 }
 
 func (s *Source) put(kind, label string, children []string, payload []graph.Field) string {

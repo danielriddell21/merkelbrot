@@ -2,6 +2,7 @@ package graph_test
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/danielriddell21/merkelbrot/graph"
 )
@@ -105,4 +106,19 @@ func ExampleSource() {
 	// batch 0041
 	// £120.00 to Acme Ltd
 	// £8.50 to Notable Coffee
+}
+
+// ExampleWeigh turns file sizes into drawing weights. The ordering survives, so
+// a bigger file is drawn bigger, but four orders of magnitude of bytes become a
+// factor of three in radius rather than a factor of a hundred.
+func ExampleWeigh() {
+	for _, size := range []float64{0, 512, 8192, 1 << 20} {
+		w := graph.Weigh(size, 512)
+		fmt.Printf("%8.0f B  weight %5.2f  radius %.2f\n", size, w, math.Sqrt(w))
+	}
+	// Output:
+	//        0 B  weight  1.00  radius 1.00
+	//      512 B  weight  2.00  radius 1.41
+	//     8192 B  weight  5.09  radius 2.26
+	//  1048576 B  weight 12.00  radius 3.46
 }

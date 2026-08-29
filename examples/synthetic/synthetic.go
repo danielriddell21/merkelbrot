@@ -90,10 +90,11 @@ func New(cfg Config) *Source {
 	leaves := make([]string, cfg.Vocabulary)
 	for i := range leaves {
 		label := fmt.Sprintf("blob-%03d", i)
-		leaves[i] = s.put("blob", label, nil, []graph.Field{
-			{Key: "size", Value: fmt.Sprint(64 + rng.IntN(4096))},
+		size := 64 + rng.IntN(4096)
+		leaves[i] = s.weigh(s.put("blob", label, nil, []graph.Field{
+			{Key: "size", Value: fmt.Sprint(size)},
 			{Key: "mode", Value: "100644"},
-		})
+		}), graph.Weigh(float64(size), 512))
 	}
 
 	var prev string
@@ -137,6 +138,15 @@ func New(cfg Config) *Source {
 	}
 	s.head = prev
 	return s
+}
+
+// weigh sets the drawing weight of a node already put, and returns its ID so it
+// can be wrapped around the call that made it.
+func (s *Source) weigh(id string, weight float64) string {
+	n := s.nodes[id]
+	n.Weight = weight
+	s.nodes[id] = n
+	return id
 }
 
 func (s *Source) put(kind, label string, children []string, payload []graph.Field) string {

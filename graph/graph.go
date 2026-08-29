@@ -62,6 +62,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"math"
 	"slices"
 )
 
@@ -94,8 +95,30 @@ type Node[K comparable] struct {
 	Children []K
 	// Payload holds the node's internals, revealed at the deepest zoom.
 	Payload []Field
-	// Weight is a relative size hint; values <= 0 are treated as 1.
+	// Weight is a relative size hint; values <= 0 are treated as 1. It is an area,
+	// so a node's radius grows with its square root. See [Weigh] for turning a real
+	// quantity into one.
 	Weight float64
+}
+
+// Weigh maps a real quantity onto a [Node.Weight] on a logarithmic scale.
+//
+// Quantities worth drawing — file sizes, amounts of money, row counts — routinely
+// span several orders of magnitude. Weight is an area, so passing one through
+// directly gives the largest node a radius hundreds of times the smallest and
+// leaves everything else a speck on the screen. Weigh compresses the range
+// instead: the ordering is kept, so more is always visibly larger, while the
+// whole graph stays within a factor of a few.
+//
+// unit is the quantity that earns a node one step above the smallest — a few
+// hundred bytes for a file size, say, or a pound for money — and so decides how
+// much of the range is spent on small values. A quantity of zero or less weighs
+// 1, the same as a node with nothing to measure.
+func Weigh(quantity, unit float64) float64 {
+	if quantity <= 0 || unit <= 0 {
+		return 1
+	}
+	return 1 + math.Log2(1+quantity/unit)
 }
 
 // Source supplies nodes to merkelbrot.
