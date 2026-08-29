@@ -1,6 +1,9 @@
 package layout
 
-import "math"
+import (
+	"math"
+	"slices"
+)
 
 // Annular sizing for the links of a chain.
 //
@@ -15,17 +18,29 @@ import "math"
 // somewhere to write its own label.
 const labelGap = 0.5
 
-// chainCore picks the child a node should be built around, which is the largest
-// of the links it continues. It returns -1 for a node that continues none.
+// chainCore picks the link a node is built around, or -1 where there is none.
+//
+// A ring means "this continues that": the link at the centre is the state before,
+// and what surrounds it is what this one added. Only a node continuing exactly
+// one link can say that. A merge joins two lines and neither is inside the other,
+// so it has no core and its parents are packed side by side instead — which is
+// what a merge looks like. Ringing one around the other would claim a single
+// predecessor the graph does not have, and after a merge the line not chosen
+// keeps nothing of its own, so the centre would be an empty stub.
 func (p *packer[K]) chainCore(v int, kids []int) int {
 	if v == p.start {
 		return -1
 	}
 	core := -1
-	for _, kid := range kids {
-		if p.isChainEdge(v, kid) && (core < 0 || p.radius[kid] > p.radius[core]) {
-			core = kid
+	for _, c := range p.chainChildren(v) {
+		// A link nested somewhere else is not this node's to build around.
+		if !slices.Contains(kids, c) {
+			continue
 		}
+		if core >= 0 {
+			return -1
+		}
+		core = c
 	}
 	return core
 }

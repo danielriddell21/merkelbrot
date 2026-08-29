@@ -41,6 +41,13 @@ type Config struct {
 	// Vocabulary is the number of distinct leaves available. Smaller values make
 	// more subtrees coincide, collapsing the graph to fewer nodes. Default 12.
 	Vocabulary int
+	// MergeEvery makes every nth commit a merge, taking a second parent from
+	// earlier in the history as well as its predecessor. Default 4; set a negative
+	// value for a strict chain.
+	//
+	// A merge is what separates a general DAG from a tree of history, so the
+	// generated graph exercises both unless it is turned off.
+	MergeEvery int
 }
 
 func (c Config) withDefaults() Config {
@@ -58,6 +65,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.Vocabulary <= 0 {
 		c.Vocabulary = 12
+	}
+	if c.MergeEvery == 0 {
+		c.MergeEvery = 4
+	}
+	if c.MergeEvery < 0 {
+		c.MergeEvery = 0
 	}
 	return c
 }
@@ -84,6 +97,7 @@ func New(cfg Config) *Source {
 	}
 
 	var prev string
+	history := make([]string, 0, cfg.Commits)
 	for c := range cfg.Commits {
 		level := leaves
 		for d := range cfg.Depth {
@@ -105,15 +119,21 @@ func New(cfg Config) *Source {
 			root = s.put("tree", "/", slices.Compact(level), nil)
 		}
 
+		// The line being continued comes first, then anything merged into it, then
+		// the content. Order is what tells the layout which parent is the mainline.
 		children := []string{}
 		if prev != "" {
 			children = append(children, prev)
+		}
+		if cfg.MergeEvery > 0 && c >= 2 && c%cfg.MergeEvery == 0 {
+			children = append(children, history[c-2])
 		}
 		children = append(children, root)
 		prev = s.put("commit", fmt.Sprintf("commit %d", c+1), children, []graph.Field{
 			{Key: "author", Value: "Ada Lovelace <ada@example.co.uk>"},
 			{Key: "date", Value: fmt.Sprintf("2026-01-%02dT09:00:00Z", 1+c%28)},
 		})
+		history = append(history, prev)
 	}
 	s.head = prev
 	return s

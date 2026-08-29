@@ -30,6 +30,6 @@ func ExampleNew() {
 	// commits: 5
 	// trees: 13
 	// blobs: 8
-	// shared: 7
+	// shared: 8
 	// tree: false
 }

@@ -750,3 +750,59 @@ func TestCrowdedRingStillLeavesALabelGap(t *testing.T) {
 		}
 	}
 }
+
+// mergeDAG is a merge commit whose second parent carries far more than its
+// first, which is the case that decides whether order or size picks the centre.
+func mergeDAG(t *testing.T) *graph.Graph[string] {
+	t.Helper()
+	nodes := []graph.Node[string]{
+		// The mainline comes first, the branch it took in second.
+		{ID: "merge", Kind: "commit", Children: []string{"main", "side", "tm"}},
+		{ID: "main", Kind: "commit", Children: []string{"t1"}},
+		{ID: "side", Kind: "commit", Children: []string{"ts"}},
+		{ID: "tm", Kind: "tree"},
+		{ID: "t1", Kind: "tree"},
+		{ID: "ts", Kind: "tree", Children: []string{}},
+	}
+	// The side branch is given the bulk, so size and order disagree.
+	for i := range 8 {
+		id := fmt.Sprintf("sb%d", i)
+		nodes[5].Children = append(nodes[5].Children, id)
+		nodes = append(nodes, graph.Node[string]{ID: id, Kind: "blob", Weight: 4})
+	}
+	return mustGraph(t, graph.NewMemorySource([]string{"merge"}, nodes...))
+}
+
+// TestMergePacksItsParentsSideBySide is the merge case: a commit that joins two
+// lines of history continues neither of them, so neither is drawn inside the
+// other and the ring is not used at all.
+func TestMergePacksItsParentsSideBySide(t *testing.T) {
+	p := layout.Pack(mergeDAG(t), layout.Options{ChainKinds: []string{"commit"}})
+	nodes := byID(p)
+	merge, main, side := nodes["merge"], nodes["main"], nodes["side"]
+
+	for _, n := range []layout.Placed[string]{main, side} {
+		if off := math.Hypot(n.X-merge.X, n.Y-merge.Y); off <= epsilon {
+			t.Errorf("%s took the centre of the merge, want the two lines side by side", n.ID)
+		}
+		if got, want := n.Parent, "merge"; got != want {
+			t.Errorf("%s nested in %q, want %q", n.ID, got, want)
+		}
+		if d := math.Hypot(n.X-merge.X, n.Y-merge.Y) + n.R; d > merge.R+epsilon {
+			t.Errorf("%s escapes the merge: %g > %g", n.ID, d, merge.R)
+		}
+	}
+	if gap := math.Hypot(main.X-side.X, main.Y-side.Y) - (main.R + side.R); gap < -epsilon {
+		t.Errorf("the two lines overlap by %g", -gap)
+	}
+}
+
+// TestSingleParentCommitStillRings guards the ordinary case against the merge
+// rule: one parent still means one ring built around it.
+func TestSingleParentCommitStillRings(t *testing.T) {
+	p := layout.Pack(chainDAG(t), layout.Options{ChainKinds: []string{"commit"}})
+	nodes := byID(p)
+	if off := math.Hypot(nodes["c2"].X-nodes["c3"].X, nodes["c2"].Y-nodes["c3"].Y); off > epsilon {
+		t.Errorf("c2 sits %g from the centre of c3, want it concentric", off)
+	}
+}

@@ -101,3 +101,43 @@ func TestPacksAndProves(t *testing.T) {
 		t.Errorf("Inclusion(%s, %s) = false, want every blob reachable from the head", leaf, root)
 	}
 }
+
+func TestMergesGiveCommitsASecondParent(t *testing.T) {
+	g := build(t, synthetic.Config{Commits: 9, MergeEvery: 4})
+	merges := 0
+	for _, n := range g.All() {
+		if n.Kind != "commit" {
+			continue
+		}
+		parents := 0
+		for range g.Children(n.ID) {
+			parents++
+		}
+		// A commit points at its parents and at its tree, so a merge has three.
+		if parents > 2 {
+			merges++
+		}
+	}
+	if merges == 0 {
+		t.Error("no commit has a second parent, want the history to fork and rejoin")
+	}
+	if g.IsTree() {
+		t.Error("the generated graph is a tree, want a DAG")
+	}
+}
+
+func TestMergesCanBeTurnedOff(t *testing.T) {
+	g := build(t, synthetic.Config{Commits: 9, MergeEvery: -1})
+	for _, n := range g.All() {
+		if n.Kind != "commit" {
+			continue
+		}
+		parents := 0
+		for range g.Children(n.ID) {
+			parents++
+		}
+		if parents > 2 {
+			t.Errorf("commit %s has %d children with merges off, want a strict chain", n.ID, parents)
+		}
+	}
+}
