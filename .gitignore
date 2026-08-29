@@ -4,3 +4,5 @@
 
 # Coverage output from `go test -coverprofile`.
 coverage.txt
+# Installed by the viewer smoke test.
+node_modules/

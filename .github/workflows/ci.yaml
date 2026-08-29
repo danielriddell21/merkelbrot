@@ -20,3 +20,25 @@ jobs:
     secrets:
       codecov-token: ${{ secrets.CODECOV_TOKEN }}
       tag-token: ${{ secrets.MERKELBROT_TOKEN }}
+
+  # The viewer is JavaScript, so no Go test ever runs it. This opens the exported
+  # page in a real browser and drives it through the zoom range it exists for.
+  viewer:
+    name: Viewer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/internal/viewertest/package-lock.json
+      - run: npm ci
+        working-directory: web/internal/viewertest
+      - run: npx playwright install --with-deps chromium
+        working-directory: web/internal/viewertest
+      - run: node smoke.mjs
+        working-directory: web/internal/viewertest
