@@ -22,6 +22,7 @@ type options struct {
 	maxDepth int
 	prove    string
 	addr     string
+	separate bool
 }
 
 // sources are the readable source names, in the order they appear in help.
@@ -29,9 +30,15 @@ var sources = []string{"ledger", "synthetic", "git"}
 
 // build reads the selected source and lays it out as a scene.
 func (o *options) build() (*scene.Scene, error) {
-	src, title, err := o.open()
+	src, title, chains, err := o.open()
 	if err != nil {
 		return nil, err
+	}
+	// Nesting is the default: separating a history leaves most objects shared
+	// between the links rather than owned by any one of them, so dominance has
+	// almost nothing left to express and the picture flattens out.
+	if !o.separate {
+		chains = nil
 	}
 
 	g, err := graph.New(src)
@@ -40,7 +47,7 @@ func (o *options) build() (*scene.Scene, error) {
 	}
 
 	b := scene.Builder[string]{Title: title}
-	s := b.Scene(layout.Pack(g, layout.Options{MaxDepth: o.maxDepth}))
+	s := b.Scene(layout.Pack(g, layout.Options{MaxDepth: o.maxDepth, ChainKinds: chains}))
 
 	if o.prove != "" {
 		roots := slices.Collect(g.Roots())
@@ -53,20 +60,23 @@ func (o *options) build() (*scene.Scene, error) {
 	return s, nil
 }
 
-func (o *options) open() (graph.Source[string], string, error) {
+// open returns the source, its title, and the kinds whose same-kind edges are
+// history rather than content.
+func (o *options) open() (graph.Source[string], string, []string, error) {
 	switch o.source {
 	case "ledger":
-		return ledger.New(ledger.Config{Seed: o.seed, Transactions: o.count}), "UK payments ledger", nil
+		cfg := ledger.Config{Seed: o.seed, Transactions: o.count}
+		return ledger.New(cfg), "UK payments ledger", []string{"transaction"}, nil
 	case "synthetic":
 		cfg := synthetic.Config{Seed: o.seed, Commits: o.count, Depth: 3, Branching: 3, Vocabulary: 16}
-		return synthetic.New(cfg), "synthetic Merkle DAG", nil
+		return synthetic.New(cfg), "synthetic Merkle DAG", []string{"commit"}, nil
 	case "git":
 		repo, err := gitrepo.Open(o.repo, gitrepo.Config{MaxCommits: o.count})
 		if err != nil {
-			return nil, "", fmt.Errorf("reading repository: %w", err)
+			return nil, "", nil, fmt.Errorf("reading repository: %w", err)
 		}
-		return repo, "git objects: " + o.repo, nil
+		return repo, "git objects: " + o.repo, []string{"commit"}, nil
 	default:
-		return nil, "", fmt.Errorf("unknown source %q, want one of %v", o.source, sources)
+		return nil, "", nil, fmt.Errorf("unknown source %q, want one of %v", o.source, sources)
 	}
 }

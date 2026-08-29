@@ -21,6 +21,21 @@ Every graph edge that is not also a containment edge is reported separately as a
 [Link], which a renderer can draw as an arc between two discs. For a strict tree
 there are no such links and the packing is exactly the tree.
 
+# Chains
+
+A chain defeats containment in a different way. In a run of commits or
+transactions every node dominates the next, so the history nests inside itself
+and draws as concentric rings with the oldest innermost — the reverse of how a
+commit graph is normally read. [Options.ChainKinds] demotes those edges to links
+and lays the links out side by side instead.
+
+It is off by default, because it costs more than it saves on real data. Most
+objects in a repository are shared across commits, and it is the chain that gives
+them a single node every path runs through. Break it and their immediate
+dominator becomes the root, so they surface as top-level siblings and the
+hierarchy flattens into a scatter. The concentric history is the price of having
+anything to nest at all.
+
 # Sizing
 
 Leaves are sized from [github.com/danielriddell21/merkelbrot/graph.Node.Weight]
@@ -115,6 +130,21 @@ type Options struct {
 	// MaxDepth limits how many containment levels are laid out, with zero meaning
 	// no limit. Nodes deeper than the limit are omitted along with their contents.
 	MaxDepth int
+	// ChainKinds names the kinds whose same-kind edges are history rather than
+	// content: "commit" for a git graph, "transaction" for a ledger.
+	//
+	// In a chain every node dominates the next, so containment alone draws one as
+	// concentric rings with the oldest innermost — the reverse of how a commit
+	// graph is normally read. Naming the kind demotes those edges to reference
+	// [Link] values and lays the chain out side by side instead, while each link
+	// still opens up under the zoom.
+	//
+	// Only the source can draw this distinction. A commit points at both its
+	// predecessor and its tree; a tree points at its subtrees. Both are edges
+	// between nodes of the same kind in the first case and different kinds in the
+	// second, and no property of the graph says which one is history. Left empty,
+	// every edge is treated as containment.
+	ChainKinds []string
 }
 
 func (o Options) withDefaults() Options {
@@ -215,8 +245,21 @@ func newPacker[K comparable](g *graph.Graph[K], opts Options) *packer[K] {
 		children: make([][]int, n+1),
 		preds:    make([][]int, n+1),
 	}
+	chained := make(map[string]bool, len(opts.ChainKinds))
+	for _, kind := range opts.ChainKinds {
+		if kind != "" {
+			chained[kind] = true
+		}
+	}
+
 	for i, id := range ids {
+		parent, _ := g.Node(id)
 		for child := range g.Children(id) {
+			// A chain edge stays in the graph — and so is still reported as a link —
+			// but is kept out of the containment tree.
+			if kid, ok := g.Node(child); ok && chained[parent.Kind] && kid.Kind == parent.Kind {
+				continue
+			}
 			c := index[child]
 			p.f.children[i] = append(p.f.children[i], c)
 			p.f.preds[c] = append(p.f.preds[c], i)
@@ -226,6 +269,17 @@ func newPacker[K comparable](g *graph.Graph[K], opts Options) *packer[K] {
 		r := index[root]
 		p.f.children[p.start] = append(p.f.children[p.start], r)
 		p.f.preds[r] = append(p.f.preds[r], p.start)
+	}
+
+	// Demoting an edge can leave its child with no way in, so it becomes a root of
+	// its own rather than dropping out of the layout entirely.
+	if len(chained) > 0 {
+		for i := range n {
+			if len(p.f.preds[i]) == 0 {
+				p.f.children[p.start] = append(p.f.children[p.start], i)
+				p.f.preds[i] = append(p.f.preds[i], p.start)
+			}
+		}
 	}
 	return p
 }

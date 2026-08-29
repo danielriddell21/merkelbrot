@@ -308,3 +308,130 @@ func TestPayloadDoesNotOverlapChildren(t *testing.T) {
 		}
 	}
 }
+
+// chainDAG is three commits in a line, each pointing at its predecessor and at a
+// tree of its own, which is the shape that makes containment degenerate.
+func chainDAG(t *testing.T) *graph.Graph[string] {
+	t.Helper()
+	return mustGraph(t, graph.NewMemorySource([]string{"c3"},
+		graph.Node[string]{ID: "c3", Kind: "commit", Children: []string{"c2", "t3"}},
+		graph.Node[string]{ID: "c2", Kind: "commit", Children: []string{"c1", "t2"}},
+		graph.Node[string]{ID: "c1", Kind: "commit", Children: []string{"t1"}},
+		graph.Node[string]{ID: "t3", Kind: "tree", Children: []string{"b3"}},
+		graph.Node[string]{ID: "t2", Kind: "tree", Children: []string{"b2"}},
+		graph.Node[string]{ID: "t1", Kind: "tree", Children: []string{"b1"}},
+		graph.Node[string]{ID: "b3", Kind: "blob"},
+		graph.Node[string]{ID: "b2", Kind: "blob"},
+		graph.Node[string]{ID: "b1", Kind: "blob"},
+	))
+}
+
+// TestChainKindsSeparateHistory is the point of the option: a history reads as a
+// row of siblings rather than as rings turned inside out.
+func TestChainKindsSeparateHistory(t *testing.T) {
+	p := layout.Pack(chainDAG(t), layout.Options{ChainKinds: []string{"commit"}})
+	nodes := byID(p)
+
+	for _, id := range []string{"c1", "c2", "c3"} {
+		if nodes[id].HasParent {
+			t.Errorf("%s nested in %q, want it at the top level", id, nodes[id].Parent)
+		}
+		if got := nodes[id].Depth; got != 0 {
+			t.Errorf("%s.Depth = %d, want 0", id, got)
+		}
+	}
+	// The demoted edges are still reported, so no relationship is lost.
+	for _, want := range []layout.Link[string]{{From: "c3", To: "c2"}, {From: "c2", To: "c1"}} {
+		if !slices.Contains(p.Links, want) {
+			t.Errorf("Links = %v, want it to contain %v", p.Links, want)
+		}
+	}
+	// Content still nests: each commit keeps its own tree.
+	if got, want := nodes["t3"].Parent, "c3"; got != want {
+		t.Errorf("t3 nested in %q, want %q", got, want)
+	}
+}
+
+// TestChainsNestWhenUndeclared is the default: with no kind named as history,
+// every edge is containment and the chain turns inside out.
+func TestChainsNestWhenUndeclared(t *testing.T) {
+	p := layout.Pack(chainDAG(t), layout.Options{})
+	nodes := byID(p)
+
+	if got, want := nodes["c2"].Parent, "c3"; got != want {
+		t.Errorf("c2 nested in %q, want %q", got, want)
+	}
+	if got, want := nodes["c1"].Parent, "c2"; got != want {
+		t.Errorf("c1 nested in %q, want %q", got, want)
+	}
+	if got, want := nodes["c1"].Depth, 2; got != want {
+		t.Errorf("c1.Depth = %d, want %d", got, want)
+	}
+	for _, unwanted := range []layout.Link[string]{{From: "c3", To: "c2"}, {From: "c2", To: "c1"}} {
+		if slices.Contains(p.Links, unwanted) {
+			t.Errorf("Links = %v, want %v expressed by containment instead", p.Links, unwanted)
+		}
+	}
+}
+
+// TestUnnamedKindsAreNeverChained keeps a plain hierarchy intact: a kind that was
+// not named as history is content, however lopsided it is.
+func TestUnnamedKindsAreNeverChained(t *testing.T) {
+	g := mustGraph(t, graph.NewMemorySource([]string{"root"},
+		graph.Node[string]{ID: "root", Children: []string{"a"}},
+		graph.Node[string]{ID: "a", Children: []string{"a1", "a2"}},
+		graph.Node[string]{ID: "a1"},
+		graph.Node[string]{ID: "a2"},
+	))
+	p := layout.Pack(g, layout.Options{ChainKinds: []string{"commit"}})
+	nodes := byID(p)
+
+	if got, want := nodes["a"].Parent, "root"; got != want {
+		t.Errorf("a nested in %q, want %q", got, want)
+	}
+	if len(p.Links) != 0 {
+		t.Errorf("Links = %v, want none", p.Links)
+	}
+}
+
+// TestContentEdgesSurviveDemotion checks that only same-kind edges move: a commit
+// and its tree share no kind, so the tree stays inside it.
+func TestContentEdgesSurviveDemotion(t *testing.T) {
+	g := mustGraph(t, graph.NewMemorySource([]string{"commit"},
+		graph.Node[string]{ID: "commit", Kind: "commit", Children: []string{"tree"}},
+		graph.Node[string]{ID: "tree", Kind: "tree", Children: []string{"blob"}},
+		graph.Node[string]{ID: "blob", Kind: "blob"},
+	))
+	p := layout.Pack(g, layout.Options{ChainKinds: []string{"commit"}})
+	nodes := byID(p)
+
+	if got, want := nodes["tree"].Parent, "commit"; got != want {
+		t.Errorf("tree nested in %q, want %q", got, want)
+	}
+	if len(p.Links) != 0 {
+		t.Errorf("Links = %v, want none", p.Links)
+	}
+}
+
+// TestSubtreesStayNestedAlongsideAChain is the case a size heuristic cannot get
+// right: tree points at tree exactly as commit points at commit, and only the
+// declaration separates them.
+func TestSubtreesStayNestedAlongsideAChain(t *testing.T) {
+	g := mustGraph(t, graph.NewMemorySource([]string{"c2"},
+		graph.Node[string]{ID: "c2", Kind: "commit", Children: []string{"c1", "t2"}},
+		graph.Node[string]{ID: "c1", Kind: "commit", Children: []string{"t1"}},
+		graph.Node[string]{ID: "t2", Kind: "tree", Children: []string{"sub"}},
+		graph.Node[string]{ID: "t1", Kind: "tree"},
+		graph.Node[string]{ID: "sub", Kind: "tree", Children: []string{"b"}},
+		graph.Node[string]{ID: "b", Kind: "blob"},
+	))
+	p := layout.Pack(g, layout.Options{ChainKinds: []string{"commit"}})
+	nodes := byID(p)
+
+	if nodes["c1"].HasParent {
+		t.Errorf("c1 nested in %q, want the chain separated", nodes["c1"].Parent)
+	}
+	if got, want := nodes["sub"].Parent, "t2"; got != want {
+		t.Errorf("sub nested in %q, want %q: tree is not a declared chain kind", got, want)
+	}
+}
