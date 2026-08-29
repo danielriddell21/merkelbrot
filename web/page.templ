@@ -30,6 +30,7 @@ templ page(title string, s *scene.Scene, sceneJSON, css, js string) {
 				<span><kbd>click</kbd> focus</span>
 				<span><kbd>esc</kbd> out</span>
 				<span><kbd>f</kbd> fit</span>
+				<span><kbd>d</kbd> derived</span>
 			</footer>
 			@templ.Raw(`<script type="application/json" id="scene">` + sceneJSON + `</script>`)
 			@templ.Raw("<script>" + js + "</script>")
