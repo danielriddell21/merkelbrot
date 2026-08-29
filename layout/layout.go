@@ -30,19 +30,23 @@ names the kinds whose same-kind edges are history rather than content — a
 distinction only the source can draw — and everything else about a chain follows
 from that naming.
 
-Nesting is kept by default, because separating a history costs more than it
-saves on real data. Most objects in a repository are shared across commits, and
-it is the chain that gives them a single node every path runs through. Break it
-with [Options.SeparateChains] and their immediate dominator becomes the root, so
-they surface as top-level siblings and the hierarchy flattens into a scatter.
+There are two ways to draw one, and both are useful.
 
-What is fixed instead is how a link is drawn. Each one is built around the link
-it continues: the predecessor sits at the centre, and everything the link added
-is spread around it as a ring rather than packed beside it as one more sibling.
-That fills a ring which would otherwise be almost entirely void, and gives it a
-reading — the ring is the difference between one link and the next.
-[Options.MaxChain] then bounds how deep the nesting runs, so a long history does
-not spend the whole zoom range on itself.
+Nested is the default. Each link is built around the link it continues: the
+predecessor sits at the centre, and everything the link added is spread around it
+as a ring rather than packed beside it as one more sibling. That fills a ring
+which would otherwise be almost entirely void, and gives it a reading — the ring
+is the difference between one link and the next. [Options.MaxChain] bounds how
+deep the nesting runs, so a long history does not spend the whole zoom range on
+itself.
+
+[Options.SeparateChains] lays the links out side by side instead, which is how a
+commit graph is usually read. Cutting the edges between links would leave every
+object they reached dominated by nothing but the root, so instead each object is
+given to the oldest link that reaches it — where it first appeared — and nests
+inside that link under whatever names it there. Every link then holds what it
+introduced, and a later link that reuses an object keeps pointing at it as a
+[Link].
 
 # Sizing
 
@@ -158,8 +162,9 @@ type Options struct {
 	// history in the other, and no property of the graph says which. Left empty,
 	// every edge is treated as containment.
 	ChainKinds []string
-	// MaxChain limits how many links of a chain are nested before the remainder is
-	// dropped, with zero meaning no limit.
+	// MaxChain limits how many links of a chain are laid out before the remainder is
+	// dropped, with zero meaning no limit. It applies whether the chain is nested or
+	// separated.
 	//
 	// Nesting costs a constant factor of scale per link, so an unbounded history
 	// spends the whole zoom range on itself: at a hundred commits the oldest is
@@ -169,16 +174,24 @@ type Options struct {
 	// with it in [Placed.Omitted], so a renderer can say what is missing.
 	//
 	// Objects still reachable from the links that remain are unaffected: only what
-	// nothing else refers to disappears.
+	// nothing else refers to disappears. Under [Options.SeparateChains], where each
+	// object belongs to the link that introduced it, that means what a dropped link
+	// introduced goes with it.
 	MaxChain int
 	// SeparateChains lays the links of a chain out side by side rather than nested,
-	// demoting the edges between them to reference [Link] values.
+	// demoting the edges between them to reference [Link] values. It is the reading
+	// a commit graph usually gets: a row of commits, each holding its own work.
 	//
-	// It is off by default because it costs more than it saves on real data. Most
-	// objects in a repository are shared across commits, and it is the chain that
-	// gives them a single node every path runs through. Break it and their
-	// immediate dominator becomes the root, so they surface as top-level siblings
-	// and the hierarchy flattens into a scatter.
+	// Nesting is the default because it keeps a single containment tree over the
+	// whole graph. Separating gives up that guarantee, since cutting the links
+	// leaves everything beneath them dominated by nothing at all. Each object is
+	// therefore given to the oldest link that reaches it — the one that introduced
+	// it — and nests there under whatever names it, so the structure within a link
+	// is unchanged. Later links that reuse it keep pointing at it as [Link] values.
+	//
+	// The two views answer different questions. Nested shows what a repository
+	// looked like at a point in its history; separated shows what each step of that
+	// history contributed.
 	SeparateChains bool
 	// MinRing is the least thickness of the ring between a node's edge and its
 	// largest child, as a fraction of that node's radius. It reserves room for a
@@ -266,6 +279,7 @@ type packer[K comparable] struct {
 	f         flow
 	chained   map[string]bool
 	truncated []bool
+	beyond    []bool
 	omitted   []int
 	idom      []int
 	rank      []int
@@ -318,6 +332,7 @@ func newPacker[K comparable](g *graph.Graph[K], opts Options) *packer[K] {
 		}
 	}
 	p.truncated = make([]bool, n)
+	p.beyond = make([]bool, n)
 	p.omitted = make([]int, n)
 
 	for i, id := range ids {
@@ -372,13 +387,34 @@ func (p *packer[K]) chainChildren(i int) []int {
 }
 
 // capChain walks the chain out from each root and cuts it once it has run for
-// [Options.MaxChain] links, so the depth the layout has to spend on a history
-// does not grow with the history.
+// [Options.MaxChain] links, so what the layout spends on a history does not grow
+// with the history.
+//
+// Cutting the edge is enough when the chain is nested, because everything past
+// the cut then has no way in. A chain laid out side by side has no such edges to
+// cut, so the links past the cut are recorded as well and dropped later.
 func (p *packer[K]) capChain() {
 	if p.opts.MaxChain <= 0 || len(p.chained) == 0 {
 		return
 	}
 
+	depth := p.chainDepths()
+
+	// Whatever the walk never reached is past the cut. Deciding this once the walk
+	// has finished keeps it independent of the order links happened to be met in,
+	// so a link reachable by both a long route and a short one counts as the short
+	// one found it.
+	for i := range p.n {
+		if depth[i] < 0 && p.isChainLink(i) {
+			p.beyond[i] = true
+		}
+	}
+}
+
+// chainDepths walks the chain out from each root, cutting it once it has run for
+// [Options.MaxChain] links, and reports how far along the chain each link sits.
+// A link the walk never reached has a depth of -1.
+func (p *packer[K]) chainDepths() []int {
 	depth := make([]int, p.n)
 	for i := range depth {
 		depth[i] = -1
@@ -396,13 +432,7 @@ func (p *packer[K]) capChain() {
 		queue = queue[1:]
 		kids := p.chainChildren(cur)
 		if depth[cur] >= p.opts.MaxChain {
-			for _, c := range kids {
-				p.f.children[cur] = removeInt(p.f.children[cur], c)
-				p.f.preds[c] = removeInt(p.f.preds[c], cur)
-			}
-			if len(kids) > 0 {
-				p.truncated[cur] = true
-			}
+			p.cut(cur, kids)
 			continue
 		}
 		for _, c := range kids {
@@ -412,6 +442,24 @@ func (p *packer[K]) capChain() {
 			}
 		}
 	}
+	return depth
+}
+
+// cut detaches the links continuing from a node and marks it as where the history
+// stops.
+func (p *packer[K]) cut(from int, kids []int) {
+	for _, c := range kids {
+		p.f.children[from] = removeInt(p.f.children[from], c)
+		p.f.preds[c] = removeInt(p.f.preds[c], from)
+	}
+	if len(kids) > 0 {
+		p.truncated[from] = true
+	}
+}
+
+// isChainLink reports whether a node takes part in a chain, in either direction.
+func (p *packer[K]) isChainLink(i int) bool {
+	return len(p.chainChildren(i)) > 0 || p.hasChainParent(i)
 }
 
 // countOmitted tallies what each cut left behind, once it is known which nodes
@@ -432,7 +480,14 @@ func (p *packer[K]) countOmitted() {
 }
 
 func (p *packer[K]) contain() {
+	// Separating a chain leaves everything beneath it dominated by nothing, so the
+	// flow graph is rewritten first to give each link what it introduced.
+	if p.opts.SeparateChains {
+		p.nestByIntroduction()
+	}
 	p.idom = p.f.dominators()
+	p.rank = breadthFirstRank(p.f, p.n)
+
 	p.domKids = make([][]int, p.n+1)
 	for i := range p.n {
 		if parent := p.idom[i]; parent >= 0 && parent != i {
@@ -443,7 +498,6 @@ func (p *packer[K]) contain() {
 	// Siblings are ordered by breadth-first rank rather than by the graph's own
 	// discovery order, so discs appear in the order the source declared its
 	// children instead of in the order a depth-first walk happened to reach them.
-	p.rank = breadthFirstRank(p.f, p.n)
 	for _, kids := range p.domKids {
 		slices.SortFunc(kids, func(a, b int) int { return p.rank[a] - p.rank[b] })
 	}

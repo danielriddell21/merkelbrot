@@ -887,3 +887,107 @@ func TestUnreadIsCarriedThrough(t *testing.T) {
 		t.Errorf("a node read in full reports %d unread, want 0", got)
 	}
 }
+
+// sharedHistory is three commits where a blob introduced by the first is still
+// referenced by the last, which is the case that decides where it lives once the
+// chain is cut.
+func sharedHistory(t *testing.T) *graph.Graph[string] {
+	t.Helper()
+	return mustGraph(t, graph.NewMemorySource([]string{"c3"},
+		graph.Node[string]{ID: "c3", Kind: "commit", Children: []string{"c2", "t3"}},
+		graph.Node[string]{ID: "c2", Kind: "commit", Children: []string{"c1", "t2"}},
+		graph.Node[string]{ID: "c1", Kind: "commit", Children: []string{"t1"}},
+		graph.Node[string]{ID: "t3", Kind: "tree", Children: []string{"old", "new"}},
+		graph.Node[string]{ID: "t2", Kind: "tree", Children: []string{"old"}},
+		graph.Node[string]{ID: "t1", Kind: "tree", Children: []string{"old"}},
+		graph.Node[string]{ID: "old", Kind: "blob"},
+		graph.Node[string]{ID: "new", Kind: "blob"},
+	))
+}
+
+// TestSeparatedChainNestsByFirstIntroduction is what makes the separated view
+// worth having: cutting the chain would otherwise leave every shared object at
+// the top level, and the commit that introduced one is a truthful home for it.
+func TestSeparatedChainNestsByFirstIntroduction(t *testing.T) {
+	p := layout.Pack(sharedHistory(t), layout.Options{
+		ChainKinds:     []string{"commit"},
+		SeparateChains: true,
+	})
+	nodes := byID(p)
+
+	// "old" is reached by all three commits and belongs to the earliest.
+	if got, want := nodes["old"].Parent, "t1"; got != want {
+		t.Errorf("old nested in %q, want %q — the tree of the commit that introduced it", got, want)
+	}
+	if got, want := nodes["t1"].Parent, "c1"; got != want {
+		t.Errorf("t1 nested in %q, want %q", got, want)
+	}
+	// "new" appears only in the last commit, so it stays there.
+	if got, want := nodes["new"].Parent, "t3"; got != want {
+		t.Errorf("new nested in %q, want %q", got, want)
+	}
+}
+
+// TestSeparatedChainLeavesOnlyLinksAtTheTop is the property that keeps the view
+// readable: a separated history is a row of commits, not a scatter of everything
+// the commits happened to touch.
+func TestSeparatedChainLeavesOnlyLinksAtTheTop(t *testing.T) {
+	p := layout.Pack(sharedHistory(t), layout.Options{
+		ChainKinds:     []string{"commit"},
+		SeparateChains: true,
+	})
+	for _, n := range p.Nodes {
+		if n.HasParent {
+			continue
+		}
+		if n.Kind != "commit" {
+			t.Errorf("%s (%s) is at the top level, want only the links of the chain there", n.ID, n.Kind)
+		}
+	}
+}
+
+// TestMaxChainAppliesToASeparatedHistory covers the combination that used to do
+// nothing: with the links side by side there are no nested edges to cut, so the
+// cap has to drop the links themselves.
+func TestMaxChainAppliesToASeparatedHistory(t *testing.T) {
+	nodes := make([]graph.Node[string], 0, 40)
+	for i := range 20 {
+		id := fmt.Sprintf("c%d", i)
+		n := graph.Node[string]{ID: id, Kind: "commit", Children: []string{fmt.Sprintf("t%d", i)}}
+		if i > 0 {
+			n.Children = append([]string{fmt.Sprintf("c%d", i-1)}, n.Children...)
+		}
+		nodes = append(nodes, n, graph.Node[string]{ID: fmt.Sprintf("t%d", i), Kind: "tree"})
+	}
+	g := mustGraph(t, graph.NewMemorySource([]string{"c19"}, nodes...))
+
+	opts := layout.Options{ChainKinds: []string{"commit"}, SeparateChains: true, MaxChain: 5}
+	p := layout.Pack(g, opts)
+
+	commits := 0
+	placed := map[string]bool{}
+	for _, n := range p.Nodes {
+		placed[n.ID] = true
+		if n.Kind == "commit" {
+			commits++
+		}
+	}
+	if commits > 5 {
+		t.Errorf("%d commits laid out, want at most the cap of 5", commits)
+	}
+	if p.Omitted == 0 {
+		t.Error("nothing reported as omitted, so the cap dropped nothing")
+	}
+	// What a dropped link introduced goes with it, and nothing left behind may
+	// point at something that is gone.
+	for _, n := range p.Nodes {
+		if n.HasParent && !placed[n.Parent] {
+			t.Errorf("%s nests in %s, which was not placed", n.ID, n.Parent)
+		}
+	}
+	for _, l := range p.Links {
+		if !placed[l.From] || !placed[l.To] {
+			t.Errorf("link %s to %s references a node that was not placed", l.From, l.To)
+		}
+	}
+}
