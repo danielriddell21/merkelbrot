@@ -20,6 +20,7 @@ type options struct {
 	seed     uint64
 	count    int
 	maxDepth int
+	maxNodes int
 	prove    string
 	addr     string
 	separate bool
@@ -39,7 +40,7 @@ func (o *options) build() (*scene.Scene, error) {
 	// between the links rather than owned by any one of them, so dominance has
 	// almost nothing left to express and the picture flattens out.
 
-	g, err := graph.New(src)
+	g, err := graph.NewLimited(src, graph.Limit{MaxNodes: o.maxNodes})
 	if err != nil {
 		return nil, fmt.Errorf("loading %s: %w", o.source, err)
 	}

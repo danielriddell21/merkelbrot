@@ -38,6 +38,8 @@ Merkle DAG) or read from a real git repository's object store.`,
 	root.PersistentFlags().Uint64Var(&opts.seed, "seed", 1, "seed for a generated source")
 	root.PersistentFlags().IntVarP(&opts.count, "count", "n", 24, "how much to read: transactions, or commits for synthetic and git")
 	root.PersistentFlags().IntVar(&opts.maxDepth, "max-depth", 0, "limit containment levels, 0 for no limit")
+	root.PersistentFlags().IntVar(&opts.maxNodes, "max-nodes", 0,
+		"stop reading the source after this many nodes, 0 for no limit")
 	root.PersistentFlags().StringVar(&opts.prove, "prove", "", "highlight the inclusion path for this node ID")
 	root.PersistentFlags().BoolVar(&opts.separate, "separate-chains", false,
 		"lay a history out side by side instead of nesting it as concentric rings")

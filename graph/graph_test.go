@@ -2,6 +2,7 @@ package graph_test
 
 import (
 	"errors"
+	"fmt"
 	"iter"
 	"math"
 	"slices"
@@ -233,5 +234,103 @@ func TestWeighTreatsNothingAsTheMinimum(t *testing.T) {
 		if got := graph.Weigh(tc.quantity, tc.unit); got != 1 {
 			t.Errorf("Weigh(%g, %g) = %g, want 1", tc.quantity, tc.unit, got)
 		}
+	}
+}
+
+// wide is a graph deep and broad enough that a limit has to cut it somewhere.
+func wide(t *testing.T) graph.Source[string] {
+	t.Helper()
+	nodes := []graph.Node[string]{{ID: "root", Kind: "commit"}}
+	for i := range 6 {
+		mid := fmt.Sprintf("m%d", i)
+		nodes[0].Children = append(nodes[0].Children, mid)
+		n := graph.Node[string]{ID: mid, Kind: "tree"}
+		for j := range 6 {
+			leaf := fmt.Sprintf("l%d-%d", i, j)
+			n.Children = append(n.Children, leaf)
+			nodes = append(nodes, graph.Node[string]{ID: leaf, Kind: "blob"})
+		}
+		nodes = append(nodes, n)
+	}
+	return graph.NewMemorySource([]string{"root"}, nodes...)
+}
+
+func TestLimitStopsAtTheGivenSize(t *testing.T) {
+	g, err := graph.NewLimited(wide(t), graph.Limit{MaxNodes: 10})
+	if err != nil {
+		t.Fatalf("NewLimited: %v", err)
+	}
+	if g.Len() > 10 {
+		t.Errorf("read %d nodes, want at most 10", g.Len())
+	}
+	if !g.Truncated() {
+		t.Error("Truncated reports false on a graph that was cut")
+	}
+	if len(slices.Collect(g.Frontier())) == 0 {
+		t.Error("no node reports the cut, so a renderer cannot say where the graph continues")
+	}
+}
+
+// TestLimitLeavesAConsistentGraph is what makes a limit safe to hand on: every
+// reference that survives must resolve, or a consumer indexing by ID gets a node
+// that is not there.
+func TestLimitLeavesAConsistentGraph(t *testing.T) {
+	g, err := graph.NewLimited(wide(t), graph.Limit{MaxNodes: 10})
+	if err != nil {
+		t.Fatalf("NewLimited: %v", err)
+	}
+	for id, n := range g.All() {
+		for _, child := range n.Children {
+			if _, ok := g.Node(child); !ok {
+				t.Errorf("%v references %v, which was never read", id, child)
+			}
+		}
+		for parent := range g.Parents(id) {
+			if _, ok := g.Node(parent); !ok {
+				t.Errorf("%v has parent %v, which was never read", id, parent)
+			}
+		}
+	}
+}
+
+// TestLimitKeepsTheTopOfTheGraph is why the bounded walk is breadth-first: a
+// depth-first cut would return one tendril to the bottom and none of the rest.
+func TestLimitKeepsTheTopOfTheGraph(t *testing.T) {
+	g, err := graph.NewLimited(wide(t), graph.Limit{MaxNodes: 7})
+	if err != nil {
+		t.Fatalf("NewLimited: %v", err)
+	}
+	kinds := map[string]int{}
+	for _, n := range g.All() {
+		kinds[n.Kind]++
+	}
+	if got, want := kinds["tree"], 6; got != want {
+		t.Errorf("kept %d of the %d nodes below the root, want all of them before going deeper", got, want)
+	}
+}
+
+func TestLimitAlwaysKeepsTheRoots(t *testing.T) {
+	src := graph.NewMemorySource([]string{"a", "b", "c"},
+		graph.Node[string]{ID: "a"}, graph.Node[string]{ID: "b"}, graph.Node[string]{ID: "c"},
+	)
+	g, err := graph.NewLimited(src, graph.Limit{MaxNodes: 1})
+	if err != nil {
+		t.Fatalf("NewLimited: %v", err)
+	}
+	if got, want := len(slices.Collect(g.Roots())), 3; got != want {
+		t.Errorf("%d roots survived a limit of 1, want %d", got, want)
+	}
+}
+
+func TestNoLimitReadsEverything(t *testing.T) {
+	g, err := graph.NewLimited(wide(t), graph.Limit{})
+	if err != nil {
+		t.Fatalf("NewLimited: %v", err)
+	}
+	if got, want := g.Len(), 43; got != want {
+		t.Errorf("read %d nodes, want the whole graph (%d)", got, want)
+	}
+	if g.Truncated() {
+		t.Error("Truncated reports true on a graph read whole")
 	}
 }

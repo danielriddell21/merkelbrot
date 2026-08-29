@@ -122,3 +122,26 @@ func ExampleWeigh() {
 	//     8192 B  weight  5.09  radius 2.26
 	//  1048576 B  weight 12.00  radius 3.46
 }
+
+// ExampleNewLimited reads only part of a source, which is what makes a graph too
+// large to hold in memory usable. The result is a consistent graph: every
+// reference in it still resolves, and the nodes where it was cut short are
+// reported so a renderer can say the graph continues there.
+func ExampleNewLimited() {
+	g, err := graph.NewLimited(commitDAG(), graph.Limit{MaxNodes: 3})
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("read:", g.Len())
+	fmt.Println("truncated:", g.Truncated())
+	for id := range g.Frontier() {
+		n, _ := g.Node(id)
+		fmt.Printf("continues below %s (%s)\n", id, n.Kind)
+	}
+	// Output:
+	// read: 3
+	// truncated: true
+	// continues below c1 (commit)
+	// continues below t2 (tree)
+}

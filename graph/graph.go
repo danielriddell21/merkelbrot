@@ -35,6 +35,14 @@ Merkle structures are acyclic by construction, and [New] enforces that: a source
 that reports a cycle fails with [ErrCycle] rather than producing a graph that
 would hang a traversal.
 
+# Reading part of a source
+
+[New] reads everything the roots reach, which a source describing a large
+repository or a long history may not fit in memory. [NewLimited] puts a ceiling
+on that: it reads breadth-first, so what it keeps is the graph nearest its roots,
+and it trims the references it never followed so that the result is a smaller
+graph rather than a broken one. [Graph.Frontier] reports where it stopped.
+
 # Traversal
 
 Traversals are returned as iterators from the standard iter package, so they
@@ -138,12 +146,13 @@ type Source[K comparable] interface {
 
 // Graph is an immutable indexed view over a [Source].
 type Graph[K comparable] struct {
-	nodes   map[K]Node[K]
-	parents map[K][]K
-	pos     map[K]int
-	order   []K
-	roots   []K
-	tree    bool
+	nodes    map[K]Node[K]
+	parents  map[K][]K
+	pos      map[K]int
+	order    []K
+	roots    []K
+	frontier []K
+	tree     bool
 }
 
 // New materialises every node reachable from the source's roots.
@@ -155,6 +164,29 @@ type Graph[K comparable] struct {
 //
 // The returned graph is a snapshot: later changes to the source are not observed.
 func New[K comparable](src Source[K]) (*Graph[K], error) {
+	return NewLimited(src, Limit{})
+}
+
+// Limit bounds how much of a source [NewLimited] will read.
+type Limit struct {
+	// MaxNodes stops the walk once this many nodes have been resolved, zero meaning
+	// no limit. The roots are always resolved, however low the limit is set.
+	MaxNodes int
+}
+
+// NewLimited materialises the source as [New] does, but stops at a limit.
+//
+// A source is free to describe more than fits in memory — a repository with a
+// million objects, a ledger going back years — and [New] has no choice but to
+// read all of it before anything can be drawn. A limit puts a ceiling on that.
+//
+// The walk is breadth-first when limited, so what survives is the graph nearest
+// its roots rather than one arbitrary path to the bottom. Nodes whose children
+// were not reached keep only the children that were, so the graph stays
+// internally consistent — every reference still resolves — and [Graph.Frontier]
+// yields exactly those nodes, which is where the graph was cut. Raising the limit
+// and reading again grows the window.
+func NewLimited[K comparable](src Source[K], limit Limit) (*Graph[K], error) {
 	g := &Graph[K]{
 		nodes:   make(map[K]Node[K]),
 		parents: make(map[K][]K),
@@ -171,9 +203,15 @@ func New[K comparable](src Source[K]) (*Graph[K], error) {
 	if len(g.roots) == 0 {
 		return nil, ErrNoRoots
 	}
-	for _, id := range g.roots {
-		if err := g.load(src, id); err != nil {
+	if limit.MaxNodes > 0 {
+		if err := g.loadBounded(src, limit.MaxNodes); err != nil {
 			return nil, err
+		}
+	} else {
+		for _, id := range g.roots {
+			if err := g.load(src, id); err != nil {
+				return nil, err
+			}
 		}
 	}
 	// Children are popped in reverse push order, so parent lists are normalised
@@ -218,6 +256,70 @@ func (g *Graph[K]) load(src Source[K], id K) error {
 	return nil
 }
 
+// loadBounded resolves nodes breadth-first from the roots and stops once max have
+// been resolved, then trims the references that were never followed so that the
+// result is a consistent graph rather than a truncated one.
+func (g *Graph[K]) loadBounded(src Source[K], max int) error {
+	// The roots come first whatever the limit, since a graph without them has
+	// nothing to draw from.
+	for _, id := range g.roots {
+		if err := g.resolve(src, id); err != nil {
+			return err
+		}
+	}
+	for i := 0; i < len(g.order) && len(g.order) < max; i++ {
+		for _, child := range g.nodes[g.order[i]].Children {
+			if len(g.order) >= max {
+				break
+			}
+			if err := g.resolve(src, child); err != nil {
+				return err
+			}
+		}
+	}
+	g.trim()
+	return nil
+}
+
+func (g *Graph[K]) resolve(src Source[K], id K) error {
+	if _, seen := g.nodes[id]; seen {
+		return nil
+	}
+	n, ok := src.Node(id)
+	if !ok {
+		return fmt.Errorf("%w: %v", ErrMissingNode, id)
+	}
+	n.ID = id
+	g.nodes[id] = n
+	g.pos[id] = len(g.order)
+	g.order = append(g.order, id)
+	return nil
+}
+
+// trim drops every reference to a node that was never resolved, records the nodes
+// those references came from as the frontier, and indexes the parents that are
+// left. A reference to a node that is not there would otherwise be a hole any
+// consumer indexing by ID could fall into.
+func (g *Graph[K]) trim() {
+	for _, id := range g.order {
+		n := g.nodes[id]
+		kept := n.Children[:0:0]
+		for _, child := range n.Children {
+			if _, ok := g.nodes[child]; ok {
+				kept = append(kept, child)
+			}
+		}
+		if len(kept) != len(n.Children) {
+			g.frontier = append(g.frontier, id)
+			n.Children = kept
+			g.nodes[id] = n
+		}
+		for _, child := range n.Children {
+			g.parents[child] = append(g.parents[child], id)
+		}
+	}
+}
+
 func (g *Graph[K]) checkAcyclic() error {
 	const (
 		white = 0
@@ -256,6 +358,18 @@ func (g *Graph[K]) checkAcyclic() error {
 	}
 	return nil
 }
+
+// Frontier yields the nodes whose references were cut short by a [Limit], in
+// discovery order. It is empty for a graph read whole.
+//
+// A node on the frontier is not incomplete in itself: its own hash, label and
+// payload are all there. What is missing is what lies beneath it, so a renderer
+// can mark it as a place the graph continues.
+func (g *Graph[K]) Frontier() iter.Seq[K] { return slices.Values(g.frontier) }
+
+// Truncated reports whether a [Limit] stopped the walk before the whole source
+// had been read.
+func (g *Graph[K]) Truncated() bool { return len(g.frontier) > 0 }
 
 // Len reports the number of nodes in the graph.
 func (g *Graph[K]) Len() int { return len(g.order) }
