@@ -18,6 +18,9 @@
 	var MIN_DRAW = 0.4;
 	var MIN_RECURSE = 4;
 	var MIN_LABEL = 22;
+	// Half the width of a label, as a fraction of its node's radius, which is also
+	// the strip searched for room to put it in.
+	var LABEL_STRIP = 0.75;
 	var MIN_FIELD = 9;
 	var MIN_FIELD_TEXT = 24;
 	var MIN_LINK = 2.5;
@@ -501,7 +504,7 @@
 			var kids = children.get(v.node.id);
 			var hasVisibleKids = kids && kids.length && v.r >= MIN_RECURSE * 3;
 			var reach = hasVisibleKids ? contentReach(v.node, v.r) : fieldsOnlyReach(v);
-			if (reach <= 0) {
+			if (!hasVisibleKids && reach <= 0) {
 				// Nothing inside, so the label takes the middle.
 				var size = Math.min(22, v.r * 0.3);
 				if (size < 8) continue;
@@ -520,7 +523,7 @@
 			if (size < 9) continue;
 			ctx.font = fontOf(size);
 			ctx.fillStyle = ink(0.72);
-			wrapInto(label, v.sx, v.sy - v.r + ring / 2, v.r * 1.5, size * 1.2, 1);
+			wrapInto(label, v.sx, v.sy - v.r + ring / 2, v.r * LABEL_STRIP * 2, size * 1.2, 1);
 
 			// A capped chain says what it left out, so a truncated history never
 			// passes for a complete one.
@@ -532,22 +535,30 @@
 		}
 	}
 
-	var largestChild = new Map();
+	var childReach = new Map();
 	var fieldReach = new Map();
 
-	function largestChildRadius(node) {
-		if (largestChild.has(node.id)) return largestChild.get(node.id);
+	function reachOfChildren(node) {
+		if (childReach.has(node.id)) return childReach.get(node.id);
 		var kids = children.get(node.id) || [];
-		var biggest = 0;
-		for (var i = 0; i < kids.length; i++) biggest = Math.max(biggest, kids[i].r);
-		largestChild.set(node.id, biggest);
-		return biggest;
+		var top = 0;
+		for (var i = 0; i < kids.length; i++) {
+			var k = kids[i];
+			if (Math.abs(k.x - node.x) < LABEL_STRIP * node.r + k.r) {
+				top = Math.max(top, k.r - (k.y - node.y));
+			}
+		}
+		childReach.set(node.id, top);
+		return top;
 	}
 
-	// How far the node's own contents reach, in screen pixels: whichever of its
-	// children or its payload discs extends furthest from the centre.
+	// How far the node's contents reach towards its top edge, in screen pixels.
+	// Only what falls within the strip the label occupies counts: a label is a line
+	// of text, not a disc, so contents out at the sides are not in its way. That is
+	// what lets a node holding a ring of children — a link of a chain — write its
+	// name in the gap the layout leaves clear above them.
 	function contentReach(node, screenR) {
-		var reach = largestChildRadius(node) * view.scale;
+		var reach = reachOfChildren(node) * view.scale;
 		if (!node.fields || !node.fields.length) return reach;
 		if (node.fields[0].r * screenR < MIN_FIELD) return reach;
 
@@ -555,7 +566,7 @@
 			var far = 0;
 			for (var i = 0; i < node.fields.length; i++) {
 				var f = node.fields[i];
-				far = Math.max(far, Math.hypot(f.x, f.y) + f.r);
+				if (Math.abs(f.x) < LABEL_STRIP + f.r) far = Math.max(far, f.r - f.y);
 			}
 			fieldReach.set(node.id, far);
 		}
