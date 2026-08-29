@@ -6,6 +6,14 @@ import "math"
 // formulation used by d3-hierarchy. The incremental basis is rebuilt whenever a
 // circle falls outside the current candidate, which is expected-linear once the
 // input has been shuffled.
+//
+// The search assumes each rebuilt basis encloses strictly more than the last,
+// which is true in exact arithmetic and not in floating point. Once the input
+// spans enough orders of magnitude — a deeply nested chain reaches 10^11 between
+// its outermost disc and a leaf — the containment test starts to disagree with
+// itself, the move-to-front restarts without end, and the layout never returns.
+// The work is therefore bounded, and a circle that certainly encloses the input,
+// if not as tightly as possible, is used if the bound is ever reached.
 
 const (
 	// enclosingSlack absorbs floating point error when testing containment, so a
@@ -30,16 +38,42 @@ func enclose(circles []Circle) Circle {
 	var basis []Circle
 	var best Circle
 	var haveBest bool
+	// Well-behaved input settles in a couple of dozen steps even for a packing of
+	// hundreds, so this is loose enough that only a search which has stopped
+	// converging will ever reach it.
+	budget := 64*len(shuffled) + 256
 	for i := 0; i < len(shuffled); {
 		if haveBest && enclosesWeak(best, shuffled[i]) {
 			i++
 			continue
+		}
+		if budget--; budget < 0 {
+			return boundingCircle(circles)
 		}
 		basis = extendBasis(basis, shuffled[i])
 		best, haveBest = encloseBasis(basis), true
 		i = 0
 	}
 	return best
+}
+
+// boundingCircle encloses every input circle, centred on the mean of their
+// centres. It is not the smallest such circle, so a packing that falls back to it
+// is looser than it could be, but it is always correct and always terminates.
+func boundingCircle(circles []Circle) Circle {
+	var cx, cy float64
+	for _, c := range circles {
+		cx += c.X
+		cy += c.Y
+	}
+	cx /= float64(len(circles))
+	cy /= float64(len(circles))
+
+	var r float64
+	for _, c := range circles {
+		r = max(r, math.Hypot(c.X-cx, c.Y-cy)+c.R)
+	}
+	return Circle{X: cx, Y: cy, R: r}
 }
 
 func extendBasis(basis []Circle, p Circle) []Circle {

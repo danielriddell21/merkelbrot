@@ -559,11 +559,21 @@
 		return false;
 	}
 
-	// Reload with the chain limit lifted. The server lays the whole history out and
-	// serves it back, which is why this is a navigation rather than a redraw.
+	// How many more links of the chain one request for more history asks for.
+	var CHAIN_STEP = 12;
+
+	// Ask the server for more history. It lays the graph out again and serves it
+	// back, which is why this is a navigation rather than a redraw.
+	//
+	// The limit is raised by a step rather than lifted altogether. Every nested link
+	// multiplies the scale between the outermost disc and a leaf, so an unbounded
+	// history runs past what a float can represent — a few hundred links reach 10^29
+	// — and arrives as a picture no zoom can resolve. Stepping keeps each answer
+	// one that can actually be drawn.
 	function expandChain() {
+		var current = (scene.stats && scene.stats.chain) || 0;
 		var url = new URL(location.href);
-		url.searchParams.set("chain", "0");
+		url.searchParams.set("chain", String(current + CHAIN_STEP));
 		location.href = url.toString();
 	}
 

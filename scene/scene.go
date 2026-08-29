@@ -118,6 +118,9 @@ type Stats struct {
 	Leaves   int `json:"leaves"`
 	MaxDepth int `json:"maxDepth"`
 	Omitted  int `json:"omitted,omitempty"`
+	// Chain is the limit on nested chain links the layout was given, zero for none.
+	// A viewer showing what was left out needs it to ask for more.
+	Chain int `json:"chain,omitempty"`
 }
 
 // Scene is a flat, serialisable description of a laid-out graph.
@@ -203,6 +206,7 @@ func (b Builder[K]) Scene(p *layout.Packing[K]) *Scene {
 	s.Stats.Nodes = len(s.Nodes)
 	s.Stats.Links = len(s.Links)
 	s.Stats.Omitted = p.Omitted
+	s.Stats.Chain = p.MaxChain
 	return s
 }
 

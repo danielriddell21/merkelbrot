@@ -218,6 +218,9 @@ type Packing[K comparable] struct {
 	Bounds Circle
 	// Omitted counts the nodes left out because [Options.MaxChain] cut the chain.
 	Omitted int
+	// MaxChain echoes the [Options.MaxChain] the packing was made with, so a caller
+	// showing a truncated history knows what to ask for to see more of it.
+	MaxChain int
 }
 
 // Pack lays the graph out as nested circles.
@@ -234,7 +237,9 @@ func Pack[K comparable](g *graph.Graph[K], opts Options) *Packing[K] {
 	p.prune()
 	p.countOmitted()
 	p.size()
-	return p.place()
+	out := p.place()
+	out.MaxChain = p.opts.MaxChain
+	return out
 }
 
 // packer carries the working state of a single [Pack] call between its phases:

@@ -5,6 +5,7 @@ import (
 	"math"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/danielriddell21/merkelbrot/graph"
 	"github.com/danielriddell21/merkelbrot/layout"
@@ -804,5 +805,58 @@ func TestSingleParentCommitStillRings(t *testing.T) {
 	nodes := byID(p)
 	if off := math.Hypot(nodes["c2"].X-nodes["c3"].X, nodes["c2"].Y-nodes["c3"].Y); off > epsilon {
 		t.Errorf("c2 sits %g from the centre of c3, want it concentric", off)
+	}
+}
+
+// TestDeepChainTerminates guards the case that used to hang: without a limit on
+// how many links nest, the scale between the outermost disc and a leaf passes
+// what floating point can compare, the enclosing-circle search stops converging,
+// and Pack never returns.
+func TestDeepChainTerminates(t *testing.T) {
+	nodes := make([]graph.Node[string], 0, 400)
+	for i := range 200 {
+		id := fmt.Sprintf("c%d", i)
+		n := graph.Node[string]{ID: id, Kind: "commit", Children: []string{fmt.Sprintf("t%d", i)}}
+		if i > 0 {
+			n.Children = append([]string{fmt.Sprintf("c%d", i-1)}, n.Children...)
+		}
+		nodes = append(nodes, n, graph.Node[string]{ID: fmt.Sprintf("t%d", i), Kind: "tree"})
+	}
+	g := mustGraph(t, graph.NewMemorySource([]string{"c199"}, nodes...))
+
+	done := make(chan *layout.Packing[string], 1)
+	go func() {
+		done <- layout.Pack(g, layout.Options{ChainKinds: []string{"commit"}, MaxChain: 0})
+	}()
+	select {
+	case p := <-done:
+		if got, want := len(p.Nodes), 400; got != want {
+			t.Errorf("placed %d nodes, want %d", got, want)
+		}
+		for _, n := range p.Nodes {
+			if math.IsNaN(n.R) || math.IsInf(n.R, 0) || math.IsNaN(n.X) || math.IsInf(n.X, 0) {
+				t.Fatalf("%s has a non-finite position or radius", n.ID)
+			}
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("Pack did not finish on a 200-link chain")
+	}
+}
+
+// TestEnclosingFallbackStillEncloses is the property the bounded search falls
+// back on: whatever it returns has to contain every circle it was given, even
+// when it gives up on finding the smallest one.
+func TestEnclosingFallbackStillEncloses(t *testing.T) {
+	g := mustGraph(t, graph.NewMemorySource([]string{"root"},
+		graph.Node[string]{ID: "root", Children: []string{"huge", "tiny", "mid"}},
+		graph.Node[string]{ID: "huge", Weight: 1e18},
+		graph.Node[string]{ID: "tiny", Weight: 1},
+		graph.Node[string]{ID: "mid", Weight: 1e9},
+	))
+	p := layout.Pack(g, layout.Options{})
+	for _, n := range p.Nodes {
+		if d := math.Hypot(n.X, n.Y) + n.R; d > p.Bounds.R*(1+1e-9) {
+			t.Errorf("%s escapes the bounds: %g > %g", n.ID, d, p.Bounds.R)
+		}
 	}
 }
