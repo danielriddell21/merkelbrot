@@ -183,6 +183,20 @@
 	function toWorldX(sx) { return (sx - width / 2) / view.scale + view.x; }
 	function toWorldY(sy) { return (sy - height / 2) / view.scale + view.y; }
 
+	// A disc wider than the window is ground rather than content: none of it is on
+	// screen but its tint, and a descent stacks a dozen of them until everything
+	// drawn inside is washed out. Fading each one by how far it overflows holds the
+	// ground steady however deep the view goes, and does it continuously, so there
+	// is no depth at which the picture changes character.
+	function groundFade(r) {
+		var cover = (2 * r) / Math.hypot(width, height);
+		return cover > 1 ? 1 / cover : 1;
+	}
+
+	// Below this a fill is indistinguishable from the ground it is painted on, and
+	// on a disc that covers the window it is the most expensive thing in the frame.
+	var MIN_FILL_ALPHA = 0.004;
+
 	function draw() {
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 		ctx.clearRect(0, 0, width, height);
@@ -206,8 +220,11 @@
 
 		ctx.beginPath();
 		ctx.arc(sx, sy, r, 0, Math.PI * 2);
-		ctx.fillStyle = shade(colour, node.leaf ? 0.32 : 0.09);
-		ctx.fill();
+		var fill = (node.leaf ? 0.32 : 0.09) * groundFade(r);
+		if (fill > MIN_FILL_ALPHA) {
+			ctx.fillStyle = shade(colour, fill);
+			ctx.fill();
+		}
 
 		ctx.lineWidth = Math.min(2, Math.max(0.4, r * 0.02));
 		ctx.strokeStyle = shade(colour, 0.78);
@@ -448,8 +465,9 @@
 		ctx.arc(cx, cy, r, 0, Math.PI * 2);
 		// Below a few pixels the fill costs as much as the outline and adds nothing,
 		// so the smallest discs are drawn as outline only.
-		if (r > 7) {
-			ctx.fillStyle = "hsla(" + h.toFixed(1) + ",58%,50%,0.07)";
+		var fill = r > 7 ? 0.07 * groundFade(r) : 0;
+		if (fill > MIN_FILL_ALPHA) {
+			ctx.fillStyle = "hsla(" + h.toFixed(1) + ",58%,50%," + fill.toFixed(3) + ")";
 			ctx.fill();
 		}
 		ctx.lineWidth = Math.max(0.4, Math.min(1.6, r * 0.03));

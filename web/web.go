@@ -30,6 +30,14 @@ what keeps a large graph responsive; past a few pixels its children are drawn;
 past a few dozen its label appears; and only once a node is large does its
 payload resolve into readable fields. Nothing is precomputed per zoom level, so
 the transition between those thresholds is smooth.
+
+Radius decides weight as well as detail. Everything the view is inside is still
+being drawn, and with containment that is a dozen translucent discs stacked one
+on the other, which washes out everything within them the deeper the zoom goes.
+A disc wider than the window is therefore ground rather than content: its fill
+fades in proportion to how far it overflows, leaving its outline and its label
+to carry the context. That holds the background steady at any depth, and it
+removes the full-window fills that were the most expensive part of a deep frame.
 */
 package web
 
