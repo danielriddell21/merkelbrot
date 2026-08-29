@@ -25,16 +25,24 @@ there are no such links and the packing is exactly the tree.
 
 A chain defeats containment in a different way. In a run of commits or
 transactions every node dominates the next, so the history nests inside itself
-and draws as concentric rings with the oldest innermost — the reverse of how a
-commit graph is normally read. [Options.ChainKinds] demotes those edges to links
-and lays the links out side by side instead.
+and draws as concentric rings with the oldest innermost. [Options.ChainKinds]
+names the kinds whose same-kind edges are history rather than content — a
+distinction only the source can draw — and everything else about a chain follows
+from that naming.
 
-It is off by default, because it costs more than it saves on real data. Most
-objects in a repository are shared across commits, and it is the chain that gives
-them a single node every path runs through. Break it and their immediate
-dominator becomes the root, so they surface as top-level siblings and the
-hierarchy flattens into a scatter. The concentric history is the price of having
-anything to nest at all.
+Nesting is kept by default, because separating a history costs more than it
+saves on real data. Most objects in a repository are shared across commits, and
+it is the chain that gives them a single node every path runs through. Break it
+with [Options.SeparateChains] and their immediate dominator becomes the root, so
+they surface as top-level siblings and the hierarchy flattens into a scatter.
+
+What is fixed instead is how a link is drawn. Each one is built around the link
+it continues: the predecessor sits at the centre, and everything the link added
+is spread around it as a ring rather than packed beside it as one more sibling.
+That fills a ring which would otherwise be almost entirely void, and gives it a
+reading — the ring is the difference between one link and the next.
+[Options.MaxChain] then bounds how deep the nesting runs, so a long history does
+not spend the whole zoom range on itself.
 
 # Sizing
 
@@ -43,7 +51,8 @@ and from how many payload fields they carry, so a node with more inside it is
 drawn larger. Every other node is sized to enclose its children plus
 [Options.Padding]. Sibling discs are arranged with the front-chain algorithm,
 which keeps the enclosing circle tight and therefore keeps the useful zoom range
-as wide as possible.
+as wide as possible; the links of a chain are the exception, and are ringed
+around their predecessor instead.
 
 # Node internals
 
@@ -458,44 +467,59 @@ func (p *packer[K]) size() {
 
 	for _, v := range postorder(p.domKids, p.start) {
 		kids := p.domKids[v]
-		fields := payloadCount(p.g, p.ids, v, p.start)
-
 		if len(kids) == 0 {
 			p.radius[v] = leafRadius(p.g, p.ids, v, p.start, p.opts)
 			p.area[v] = Circle{R: p.opts.PayloadFill}
 			continue
 		}
 
-		circles := make([]Circle, len(kids), len(kids)+1)
-		for i, kid := range kids {
-			circles[i].R = p.radius[kid]
+		fields := payloadCount(p.g, p.ids, v, p.start)
+		// A link of a chain is built around the link it continues, so the ring it
+		// adds holds its own content rather than a void.
+		if core := p.chainCore(v, kids); core >= 0 {
+			p.sizeAnnulus(v, core, kids, fields)
+			continue
 		}
-		if fields > 0 {
-			circles = append(circles, Circle{R: payloadRadius(fields, p.opts)})
-		}
-
-		p.radius[v] = packSiblings(circles)
-		// The virtual start is not drawn, so padding it would leave a dead ring
-		// around the whole packing and shrink the useful zoom range.
-		if v != p.start {
-			p.radius[v] += p.opts.Padding
-
-			// A container whose largest child nearly fills it has no ring left to
-			// carry its own label, which is common along a chain. Widening it to
-			// keep a minimum ring buys that room back.
-			if p.opts.MinRing > 0 {
-				widest := 0.0
-				for _, kid := range kids {
-					widest = max(widest, p.radius[kid])
-				}
-				p.radius[v] = max(p.radius[v], widest/(1-p.opts.MinRing))
-			}
-		}
-		p.offsets[v] = circles[:len(kids)]
-		if fields > 0 && p.radius[v] > 0 {
-			p.area[v] = p.payloadArea(circles[len(kids)], p.radius[v])
-		}
+		p.sizePacked(v, kids, fields)
 	}
+}
+
+// sizePacked arranges a node's contents as siblings and sizes the node to
+// enclose them, which is how everything but a chain is laid out.
+func (p *packer[K]) sizePacked(v int, kids []int, fields int) {
+	circles := make([]Circle, len(kids), len(kids)+1)
+	for i, kid := range kids {
+		circles[i].R = p.radius[kid]
+	}
+	if fields > 0 {
+		circles = append(circles, Circle{R: payloadRadius(fields, p.opts)})
+	}
+
+	p.radius[v] = packSiblings(circles)
+	// The virtual start is not drawn, so padding it would leave a dead ring around
+	// the whole packing and shrink the useful zoom range.
+	if v != p.start {
+		p.radius[v] += p.opts.Padding
+		p.radius[v] = max(p.radius[v], p.minRing(kids))
+	}
+	p.offsets[v] = circles[:len(kids)]
+	if fields > 0 && p.radius[v] > 0 {
+		p.area[v] = p.payloadArea(circles[len(kids)], p.radius[v])
+	}
+}
+
+// minRing gives the radius a node needs for [Options.MinRing] to hold, which is
+// what keeps a container whose largest child nearly fills it from having no room
+// left to carry its own label.
+func (p *packer[K]) minRing(kids []int) float64 {
+	if p.opts.MinRing <= 0 {
+		return 0
+	}
+	widest := 0.0
+	for _, kid := range kids {
+		widest = max(widest, p.radius[kid])
+	}
+	return widest / (1 - p.opts.MinRing)
 }
 
 func (p *packer[K]) payloadArea(slot Circle, radius float64) Circle {

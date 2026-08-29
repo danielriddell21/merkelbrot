@@ -560,3 +560,193 @@ func TestMinRingLeavesRoomForALabel(t *testing.T) {
 		t.Errorf("ring with MinRing 0.25 = %.2f, want at least 0.25", got)
 	}
 }
+
+// TestChainLinkRingsItsOwnContent is the annular case: a commit is built around
+// the commit it continues, so the ring it adds holds what it added.
+func TestChainLinkRingsItsOwnContent(t *testing.T) {
+	p := layout.Pack(chainDAG(t), layout.Options{ChainKinds: []string{"commit"}})
+	nodes := byID(p)
+
+	for _, step := range []struct{ outer, core, content string }{
+		{"c3", "c2", "t3"},
+		{"c2", "c1", "t2"},
+	} {
+		outer, core, content := nodes[step.outer], nodes[step.core], nodes[step.content]
+		if off := math.Hypot(core.X-outer.X, core.Y-outer.Y); off > epsilon {
+			t.Errorf("%s sits %g from the centre of %s, want it concentric", step.core, off, step.outer)
+		}
+		// The content of the newer commit is in the ring: clear of the core, inside
+		// the commit that added it.
+		d := math.Hypot(content.X-outer.X, content.Y-outer.Y)
+		if d-content.R < core.R-epsilon {
+			t.Errorf("%s reaches into %s, want it in the ring around it", step.content, step.core)
+		}
+		if d+content.R > outer.R+epsilon {
+			t.Errorf("%s escapes %s", step.content, step.outer)
+		}
+	}
+}
+
+// TestChainRingLeavesRoomForALabel checks the gap the ring reserves at the top,
+// which is the one place a container can write its own name.
+func TestChainRingLeavesRoomForALabel(t *testing.T) {
+	p := layout.Pack(chainDAG(t), layout.Options{ChainKinds: []string{"commit"}})
+	nodes := byID(p)
+	outer, core := nodes["c3"], nodes["c2"]
+
+	// Walk up from the top of the core to the edge of the commit: nothing placed in
+	// the ring may stand in the way.
+	for d := core.R; d <= outer.R; d += (outer.R - core.R) / 32 {
+		x, y := outer.X, outer.Y-d
+		for _, n := range p.Nodes {
+			if n.ID == "c3" || n.ID == "c2" {
+				continue
+			}
+			if math.Hypot(x-n.X, y-n.Y) < n.R {
+				t.Fatalf("%s covers the label gap at %g above the centre", n.ID, d)
+			}
+		}
+	}
+}
+
+// TestChainRingDoesNotOverlap guards the ring arithmetic, which places discs by
+// angle rather than by the collision search the other siblings use.
+func TestChainRingDoesNotOverlap(t *testing.T) {
+	p := layout.Pack(chainDAG(t), layout.Options{ChainKinds: []string{"commit"}})
+	for i, a := range p.Nodes {
+		for _, b := range p.Nodes[i+1:] {
+			if a.Parent != b.Parent || a.HasParent != b.HasParent {
+				continue
+			}
+			if gap := math.Hypot(a.X-b.X, a.Y-b.Y) - (a.R + b.R); gap < -epsilon {
+				t.Errorf("%s and %s overlap by %g", a.ID, b.ID, -gap)
+			}
+		}
+	}
+}
+
+// TestChainLinkRingsItsPayload puts a commit's own fields in the ring with its
+// content, since the commit it continues has the middle.
+func TestChainLinkRingsItsPayload(t *testing.T) {
+	g := mustGraph(t, graph.NewMemorySource([]string{"c2"},
+		graph.Node[string]{ID: "c2", Kind: "commit", Children: []string{"c1", "t2"}, Payload: []graph.Field{
+			{Key: "author", Value: "dan"},
+			{Key: "when", Value: "today"},
+		}},
+		graph.Node[string]{ID: "c1", Kind: "commit", Children: []string{"t1"}},
+		graph.Node[string]{ID: "t2", Kind: "tree"},
+		graph.Node[string]{ID: "t1", Kind: "tree"},
+	))
+	p := layout.Pack(g, layout.Options{ChainKinds: []string{"commit"}})
+	nodes := byID(p)
+	c2, c1, t2 := nodes["c2"], nodes["c1"], nodes["t2"]
+
+	if got, want := len(c2.Payload), 2; got != want {
+		t.Fatalf("c2 has %d slots, want %d", got, want)
+	}
+	for i, s := range c2.Payload {
+		x, y, r := c2.X+s.X*c2.R, c2.Y+s.Y*c2.R, s.R*c2.R
+		if d := math.Hypot(x-c2.X, y-c2.Y) + r; d > c2.R+epsilon {
+			t.Errorf("slot %d escapes c2: %g > %g", i, d, c2.R)
+		}
+		for _, n := range []layout.Placed[string]{c1, t2} {
+			if gap := math.Hypot(x-n.X, y-n.Y) - (r + n.R); gap < -epsilon {
+				t.Errorf("slot %d overlaps %s by %g", i, n.ID, -gap)
+			}
+		}
+	}
+}
+
+// TestChainLinkWithNothingNewKeepsARing covers a commit that added nothing: it
+// still has to be larger than the one it continues, or it cannot be seen at all.
+func TestChainLinkWithNothingNewKeepsARing(t *testing.T) {
+	g := mustGraph(t, graph.NewMemorySource([]string{"c3"},
+		graph.Node[string]{ID: "c3", Kind: "commit", Children: []string{"c2"}},
+		graph.Node[string]{ID: "c2", Kind: "commit", Children: []string{"c1"}},
+		graph.Node[string]{ID: "c1", Kind: "commit"},
+	))
+	p := layout.Pack(g, layout.Options{ChainKinds: []string{"commit"}})
+	nodes := byID(p)
+
+	for _, step := range [][2]string{{"c3", "c2"}, {"c2", "c1"}} {
+		outer, inner := nodes[step[0]], nodes[step[1]]
+		if off := math.Hypot(inner.X-outer.X, inner.Y-outer.Y); off > epsilon {
+			t.Errorf("%s sits %g from the centre of %s, want it concentric", step[1], off, step[0])
+		}
+		if ring := (outer.R - inner.R) / outer.R; ring < 0.18-epsilon {
+			t.Errorf("ring around %s = %.2f, want the minimum kept", step[1], ring)
+		}
+	}
+}
+
+// crowdedChain is a commit whose ring has to hold a dozen new blobs, which is
+// what the ring arithmetic exists for: one item fits anywhere, twelve do not.
+func crowdedChain(t *testing.T) *graph.Graph[string] {
+	t.Helper()
+	nodes := []graph.Node[string]{
+		{ID: "c2", Kind: "commit", Children: []string{"c1"}},
+		{ID: "c1", Kind: "commit", Children: []string{"old"}},
+		{ID: "old", Kind: "blob"},
+	}
+	for i := range 12 {
+		id := fmt.Sprintf("b%d", i)
+		nodes[0].Children = append(nodes[0].Children, id)
+		nodes = append(nodes, graph.Node[string]{ID: id, Kind: "blob", Weight: float64(1 + i%4)})
+	}
+	return mustGraph(t, graph.NewMemorySource([]string{"c2"}, nodes...))
+}
+
+// TestCrowdedRingFitsInsideItsNode checks the ring widens far enough to hold
+// everything a commit added without the discs running into one another.
+func TestCrowdedRingFitsInsideItsNode(t *testing.T) {
+	p := layout.Pack(crowdedChain(t), layout.Options{ChainKinds: []string{"commit"}})
+	nodes := byID(p)
+	c2, c1 := nodes["c2"], nodes["c1"]
+
+	if off := math.Hypot(c1.X-c2.X, c1.Y-c2.Y); off > epsilon {
+		t.Errorf("c1 sits %g from the centre of c2, want it concentric", off)
+	}
+	var ring []layout.Placed[string]
+	for _, n := range p.Nodes {
+		if n.Parent == "c2" && n.ID != "c1" {
+			ring = append(ring, n)
+		}
+	}
+	if got, want := len(ring), 12; got != want {
+		t.Fatalf("ring holds %d nodes, want %d", got, want)
+	}
+	for i, a := range ring {
+		if d := math.Hypot(a.X-c2.X, a.Y-c2.Y) + a.R; d > c2.R+epsilon {
+			t.Errorf("%s escapes c2: %g > %g", a.ID, d, c2.R)
+		}
+		if gap := math.Hypot(a.X-c1.X, a.Y-c1.Y) - (a.R + c1.R); gap < -epsilon {
+			t.Errorf("%s overlaps the commit it surrounds by %g", a.ID, -gap)
+		}
+		for _, b := range ring[i+1:] {
+			if gap := math.Hypot(a.X-b.X, a.Y-b.Y) - (a.R + b.R); gap < -epsilon {
+				t.Errorf("%s and %s overlap by %g", a.ID, b.ID, -gap)
+			}
+		}
+	}
+}
+
+// TestCrowdedRingStillLeavesALabelGap is the same case as
+// [TestChainRingLeavesRoomForALabel] with the ring full, where the room has to
+// be taken out of the ring rather than found in what was left over.
+func TestCrowdedRingStillLeavesALabelGap(t *testing.T) {
+	p := layout.Pack(crowdedChain(t), layout.Options{ChainKinds: []string{"commit"}})
+	nodes := byID(p)
+	c2, c1 := nodes["c2"], nodes["c1"]
+
+	for d := c1.R; d <= c2.R; d += (c2.R - c1.R) / 64 {
+		x, y := c2.X, c2.Y-d
+		for _, n := range p.Nodes {
+			if n.ID == "c2" || n.ID == "c1" {
+				continue
+			}
+			if math.Hypot(x-n.X, y-n.Y) < n.R {
+				t.Fatalf("%s covers the label gap at %g above the centre", n.ID, d)
+			}
+		}
+	}
+}
