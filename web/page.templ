@@ -48,6 +48,9 @@ templ stats(st scene.Stats) {
 			@stat("shared", fmt.Sprint(st.Shared))
 		}
 		@stat("depth", fmt.Sprint(st.MaxDepth+1))
+		if st.Omitted > 0 {
+			@stat("hidden", fmt.Sprint(st.Omitted))
+		}
 	</dl>
 }
 

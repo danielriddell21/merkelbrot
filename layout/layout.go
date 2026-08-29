@@ -105,6 +105,10 @@ type Placed[K comparable] struct {
 	Shared bool
 	// Leaf reports whether the node contains no other nodes.
 	Leaf bool
+	// Truncated reports that this node is the last link of a chain that [Options.MaxChain]
+	// cut short, and Omitted counts the nodes dropped with the rest of it.
+	Truncated bool
+	Omitted   int
 	// Payload holds the node's fields, packed inside it.
 	Payload []Slot
 }
@@ -131,20 +135,43 @@ type Options struct {
 	// no limit. Nodes deeper than the limit are omitted along with their contents.
 	MaxDepth int
 	// ChainKinds names the kinds whose same-kind edges are history rather than
-	// content: "commit" for a git graph, "transaction" for a ledger.
-	//
-	// In a chain every node dominates the next, so containment alone draws one as
-	// concentric rings with the oldest innermost — the reverse of how a commit
-	// graph is normally read. Naming the kind demotes those edges to reference
-	// [Link] values and lays the chain out side by side instead, while each link
-	// still opens up under the zoom.
+	// content: "commit" for a git graph, "transaction" for a ledger. It only
+	// identifies chains; [Options.MaxChain] and [Options.SeparateChains] act on
+	// what it names.
 	//
 	// Only the source can draw this distinction. A commit points at both its
-	// predecessor and its tree; a tree points at its subtrees. Both are edges
-	// between nodes of the same kind in the first case and different kinds in the
-	// second, and no property of the graph says which one is history. Left empty,
+	// predecessor and its tree; a tree points at its subtrees. The first pair
+	// shares a kind and the second does not, yet both are content in one case and
+	// history in the other, and no property of the graph says which. Left empty,
 	// every edge is treated as containment.
 	ChainKinds []string
+	// MaxChain limits how many links of a chain are nested before the remainder is
+	// dropped, with zero meaning no limit.
+	//
+	// Nesting costs a constant factor of scale per link, so an unbounded history
+	// spends the whole zoom range on itself: at a hundred commits the oldest is
+	// around 10^-11 of the frame and can never share the screen with recent work.
+	// Capping the chain keeps depth and scale bounded however long the history
+	// grows. The last link kept is marked [Placed.Truncated] and counts what went
+	// with it in [Placed.Omitted], so a renderer can say what is missing.
+	//
+	// Objects still reachable from the links that remain are unaffected: only what
+	// nothing else refers to disappears.
+	MaxChain int
+	// SeparateChains lays the links of a chain out side by side rather than nested,
+	// demoting the edges between them to reference [Link] values.
+	//
+	// It is off by default because it costs more than it saves on real data. Most
+	// objects in a repository are shared across commits, and it is the chain that
+	// gives them a single node every path runs through. Break it and their
+	// immediate dominator becomes the root, so they surface as top-level siblings
+	// and the hierarchy flattens into a scatter.
+	SeparateChains bool
+	// MinRing is the least thickness of the ring between a node's edge and its
+	// largest child, as a fraction of that node's radius. It reserves room for a
+	// container to be labelled where its contents would otherwise fill it. Default
+	// 0.18; set a negative value for none.
+	MinRing float64
 }
 
 func (o Options) withDefaults() Options {
@@ -160,6 +187,15 @@ func (o Options) withDefaults() Options {
 	if o.MaxDepth < 0 {
 		o.MaxDepth = 0
 	}
+	if o.MaxChain < 0 {
+		o.MaxChain = 0
+	}
+	if o.MinRing == 0 {
+		o.MinRing = 0.18
+	}
+	if o.MinRing < 0 || o.MinRing >= 1 {
+		o.MinRing = 0
+	}
 	return o
 }
 
@@ -171,6 +207,8 @@ type Packing[K comparable] struct {
 	Links []Link[K]
 	// Bounds is the circle enclosing the whole packing, centred on the origin.
 	Bounds Circle
+	// Omitted counts the nodes left out because [Options.MaxChain] cut the chain.
+	Omitted int
 }
 
 // Pack lays the graph out as nested circles.
@@ -185,6 +223,7 @@ func Pack[K comparable](g *graph.Graph[K], opts Options) *Packing[K] {
 	}
 	p.contain()
 	p.prune()
+	p.countOmitted()
 	p.size()
 	return p.place()
 }
@@ -200,12 +239,15 @@ type packer[K comparable] struct {
 	n     int
 	start int
 
-	f       flow
-	idom    []int
-	rank    []int
-	domKids [][]int
-	depth   []int
-	include []bool
+	f         flow
+	chained   map[string]bool
+	truncated []bool
+	omitted   []int
+	idom      []int
+	rank      []int
+	domKids   [][]int
+	depth     []int
+	include   []bool
 
 	radius  []float64
 	offsets [][]Circle
@@ -245,19 +287,20 @@ func newPacker[K comparable](g *graph.Graph[K], opts Options) *packer[K] {
 		children: make([][]int, n+1),
 		preds:    make([][]int, n+1),
 	}
-	chained := make(map[string]bool, len(opts.ChainKinds))
+	p.chained = make(map[string]bool, len(opts.ChainKinds))
 	for _, kind := range opts.ChainKinds {
 		if kind != "" {
-			chained[kind] = true
+			p.chained[kind] = true
 		}
 	}
+	p.truncated = make([]bool, n)
+	p.omitted = make([]int, n)
 
 	for i, id := range ids {
-		parent, _ := g.Node(id)
 		for child := range g.Children(id) {
 			// A chain edge stays in the graph — and so is still reported as a link —
-			// but is kept out of the containment tree.
-			if kid, ok := g.Node(child); ok && chained[parent.Kind] && kid.Kind == parent.Kind {
+			// but is kept out of the containment tree when the links are separated.
+			if opts.SeparateChains && p.isChainEdge(i, index[child]) {
 				continue
 			}
 			c := index[child]
@@ -270,10 +313,11 @@ func newPacker[K comparable](g *graph.Graph[K], opts Options) *packer[K] {
 		p.f.children[p.start] = append(p.f.children[p.start], r)
 		p.f.preds[r] = append(p.f.preds[r], p.start)
 	}
+	p.capChain()
 
 	// Demoting an edge can leave its child with no way in, so it becomes a root of
 	// its own rather than dropping out of the layout entirely.
-	if len(chained) > 0 {
+	if opts.SeparateChains && len(p.chained) > 0 {
 		for i := range n {
 			if len(p.f.preds[i]) == 0 {
 				p.f.children[p.start] = append(p.f.children[p.start], i)
@@ -282,6 +326,85 @@ func newPacker[K comparable](g *graph.Graph[K], opts Options) *packer[K] {
 		}
 	}
 	return p
+}
+
+func (p *packer[K]) isChainEdge(parent, child int) bool {
+	if parent == p.start || child == p.start || len(p.chained) == 0 {
+		return false
+	}
+	a, _ := p.g.Node(p.ids[parent])
+	b, _ := p.g.Node(p.ids[child])
+	return p.chained[a.Kind] && a.Kind == b.Kind
+}
+
+func (p *packer[K]) chainChildren(i int) []int {
+	var out []int
+	for child := range p.g.Children(p.ids[i]) {
+		if c := p.index[child]; p.isChainEdge(i, c) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// capChain walks the chain out from each root and cuts it once it has run for
+// [Options.MaxChain] links, so the depth the layout has to spend on a history
+// does not grow with the history.
+func (p *packer[K]) capChain() {
+	if p.opts.MaxChain <= 0 || len(p.chained) == 0 {
+		return
+	}
+
+	depth := make([]int, p.n)
+	for i := range depth {
+		depth[i] = -1
+	}
+	queue := make([]int, 0, len(p.f.children[p.start]))
+	for _, r := range p.f.children[p.start] {
+		if depth[r] < 0 {
+			depth[r] = 1
+			queue = append(queue, r)
+		}
+	}
+
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		kids := p.chainChildren(cur)
+		if depth[cur] >= p.opts.MaxChain {
+			for _, c := range kids {
+				p.f.children[cur] = removeInt(p.f.children[cur], c)
+				p.f.preds[c] = removeInt(p.f.preds[c], cur)
+			}
+			if len(kids) > 0 {
+				p.truncated[cur] = true
+			}
+			continue
+		}
+		for _, c := range kids {
+			if depth[c] < 0 {
+				depth[c] = depth[cur] + 1
+				queue = append(queue, c)
+			}
+		}
+	}
+}
+
+// countOmitted tallies what each cut left behind, once it is known which nodes
+// made it into the layout.
+func (p *packer[K]) countOmitted() {
+	for i := range p.n {
+		if !p.truncated[i] {
+			continue
+		}
+		for _, c := range p.chainChildren(i) {
+			for id := range p.g.Descendants(p.ids[c]) {
+				if j := p.index[id]; !p.include[j] {
+					p.omitted[i]++
+				}
+			}
+		}
+	}
 }
 
 func (p *packer[K]) contain() {
@@ -321,7 +444,8 @@ func (p *packer[K]) prune() {
 		}
 	}
 	for i := range p.n {
-		if !p.include[i] {
+		// A node the chain cap made unreachable has no dominator to detach it from.
+		if !p.include[i] && p.idom[i] >= 0 {
 			p.domKids[p.idom[i]] = removeInt(p.domKids[p.idom[i]], i)
 		}
 	}
@@ -355,6 +479,17 @@ func (p *packer[K]) size() {
 		// around the whole packing and shrink the useful zoom range.
 		if v != p.start {
 			p.radius[v] += p.opts.Padding
+
+			// A container whose largest child nearly fills it has no ring left to
+			// carry its own label, which is common along a chain. Widening it to
+			// keep a minimum ring buys that room back.
+			if p.opts.MinRing > 0 {
+				widest := 0.0
+				for _, kid := range kids {
+					widest = max(widest, p.radius[kid])
+				}
+				p.radius[v] = max(p.radius[v], widest/(1-p.opts.MinRing))
+			}
 		}
 		p.offsets[v] = circles[:len(kids)]
 		if fields > 0 && p.radius[v] > 0 {
@@ -390,6 +525,12 @@ func (p *packer[K]) place() *Packing[K] {
 		}
 	}
 
+	for i := range p.n {
+		if p.include[i] {
+			continue
+		}
+		out.Omitted++
+	}
 	out.Links = p.links()
 	return out
 }
@@ -419,14 +560,16 @@ func (p *packer[K]) placed(v, parent int, c Circle) Placed[K] {
 	id := p.ids[v]
 	n, _ := p.g.Node(id)
 	out := Placed[K]{
-		Circle: c,
-		ID:     id,
-		Kind:   n.Kind,
-		Label:  n.Label,
-		Hash:   n.Hash,
-		Depth:  p.depth[v],
-		Leaf:   len(p.domKids[v]) == 0,
-		Shared: countAtLeastTwo(p.g, id),
+		Circle:    c,
+		ID:        id,
+		Kind:      n.Kind,
+		Label:     n.Label,
+		Hash:      n.Hash,
+		Depth:     p.depth[v],
+		Leaf:      len(p.domKids[v]) == 0,
+		Shared:    countAtLeastTwo(p.g, id),
+		Truncated: p.truncated[v],
+		Omitted:   p.omitted[v],
 	}
 	if parent != p.start {
 		out.Parent, out.HasParent = p.ids[parent], true

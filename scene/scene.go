@@ -83,15 +83,17 @@ type Field struct {
 // Node is a placed node ready to draw.
 type Node struct {
 	Circle
-	ID     string  `json:"id"`
-	Parent string  `json:"parent,omitempty"`
-	Kind   string  `json:"kind,omitempty"`
-	Label  string  `json:"label,omitempty"`
-	Hash   string  `json:"hash,omitempty"`
-	Depth  int     `json:"depth"`
-	Leaf   bool    `json:"leaf,omitempty"`
-	Shared bool    `json:"shared,omitempty"`
-	Fields []Field `json:"fields,omitempty"`
+	ID     string `json:"id"`
+	Parent string `json:"parent,omitempty"`
+	Kind   string `json:"kind,omitempty"`
+	Label  string `json:"label,omitempty"`
+	Hash   string `json:"hash,omitempty"`
+	Depth  int    `json:"depth"`
+	Leaf   bool   `json:"leaf,omitempty"`
+	Shared bool   `json:"shared,omitempty"`
+	// Omitted counts what a chain cap dropped behind this node, zero if nothing was.
+	Omitted int     `json:"omitted,omitempty"`
+	Fields  []Field `json:"fields,omitempty"`
 }
 
 // Link is an edge that containment does not already show.
@@ -115,6 +117,7 @@ type Stats struct {
 	Shared   int `json:"shared"`
 	Leaves   int `json:"leaves"`
 	MaxDepth int `json:"maxDepth"`
+	Omitted  int `json:"omitted,omitempty"`
 }
 
 // Scene is a flat, serialisable description of a laid-out graph.
@@ -158,13 +161,14 @@ func (b Builder[K]) Scene(p *layout.Packing[K]) *Scene {
 	seenKind := make(map[string]bool)
 	for _, n := range p.Nodes {
 		out := Node{
-			Circle: Circle{X: n.X, Y: n.Y, R: n.R},
-			ID:     b.id(n.ID),
-			Kind:   n.Kind,
-			Label:  n.Label,
-			Depth:  n.Depth,
-			Leaf:   n.Leaf,
-			Shared: n.Shared,
+			Circle:  Circle{X: n.X, Y: n.Y, R: n.R},
+			ID:      b.id(n.ID),
+			Kind:    n.Kind,
+			Label:   n.Label,
+			Depth:   n.Depth,
+			Leaf:    n.Leaf,
+			Shared:  n.Shared,
+			Omitted: n.Omitted,
 		}
 		if n.HasParent {
 			out.Parent = b.id(n.Parent)
@@ -198,6 +202,7 @@ func (b Builder[K]) Scene(p *layout.Packing[K]) *Scene {
 	}
 	s.Stats.Nodes = len(s.Nodes)
 	s.Stats.Links = len(s.Links)
+	s.Stats.Omitted = p.Omitted
 	return s
 }
 

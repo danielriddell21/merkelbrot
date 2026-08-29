@@ -23,6 +23,7 @@ type options struct {
 	prove    string
 	addr     string
 	separate bool
+	maxChain int
 }
 
 // sources are the readable source names, in the order they appear in help.
@@ -37,9 +38,6 @@ func (o *options) build() (*scene.Scene, error) {
 	// Nesting is the default: separating a history leaves most objects shared
 	// between the links rather than owned by any one of them, so dominance has
 	// almost nothing left to express and the picture flattens out.
-	if !o.separate {
-		chains = nil
-	}
 
 	g, err := graph.New(src)
 	if err != nil {
@@ -47,7 +45,12 @@ func (o *options) build() (*scene.Scene, error) {
 	}
 
 	b := scene.Builder[string]{Title: title}
-	s := b.Scene(layout.Pack(g, layout.Options{MaxDepth: o.maxDepth, ChainKinds: chains}))
+	s := b.Scene(layout.Pack(g, layout.Options{
+		MaxDepth:       o.maxDepth,
+		ChainKinds:     chains,
+		MaxChain:       o.maxChain,
+		SeparateChains: o.separate,
+	}))
 
 	if o.prove != "" {
 		roots := slices.Collect(g.Roots())

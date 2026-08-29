@@ -26,9 +26,9 @@ func ExamplePack() {
 	}
 	// Output:
 	// commit covers 100% of the view
-	//   tree covers 95% of the view
-	//     readme covers 45% of the view
-	//     licence covers 45% of the view
+	//   tree covers 82% of the view
+	//     readme covers 39% of the view
+	//     licence covers 39% of the view
 }
 
 // ExamplePack_sharedSubtree shows how a node reachable from two parents is nested

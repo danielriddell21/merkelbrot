@@ -1,6 +1,7 @@
 package layout_test
 
 import (
+	"fmt"
 	"math"
 	"slices"
 	"testing"
@@ -329,7 +330,7 @@ func chainDAG(t *testing.T) *graph.Graph[string] {
 // TestChainKindsSeparateHistory is the point of the option: a history reads as a
 // row of siblings rather than as rings turned inside out.
 func TestChainKindsSeparateHistory(t *testing.T) {
-	p := layout.Pack(chainDAG(t), layout.Options{ChainKinds: []string{"commit"}})
+	p := layout.Pack(chainDAG(t), layout.Options{ChainKinds: []string{"commit"}, SeparateChains: true})
 	nodes := byID(p)
 
 	for _, id := range []string{"c1", "c2", "c3"} {
@@ -383,7 +384,7 @@ func TestUnnamedKindsAreNeverChained(t *testing.T) {
 		graph.Node[string]{ID: "a1"},
 		graph.Node[string]{ID: "a2"},
 	))
-	p := layout.Pack(g, layout.Options{ChainKinds: []string{"commit"}})
+	p := layout.Pack(g, layout.Options{ChainKinds: []string{"commit"}, SeparateChains: true})
 	nodes := byID(p)
 
 	if got, want := nodes["a"].Parent, "root"; got != want {
@@ -402,7 +403,7 @@ func TestContentEdgesSurviveDemotion(t *testing.T) {
 		graph.Node[string]{ID: "tree", Kind: "tree", Children: []string{"blob"}},
 		graph.Node[string]{ID: "blob", Kind: "blob"},
 	))
-	p := layout.Pack(g, layout.Options{ChainKinds: []string{"commit"}})
+	p := layout.Pack(g, layout.Options{ChainKinds: []string{"commit"}, SeparateChains: true})
 	nodes := byID(p)
 
 	if got, want := nodes["tree"].Parent, "commit"; got != want {
@@ -425,7 +426,7 @@ func TestSubtreesStayNestedAlongsideAChain(t *testing.T) {
 		graph.Node[string]{ID: "sub", Kind: "tree", Children: []string{"b"}},
 		graph.Node[string]{ID: "b", Kind: "blob"},
 	))
-	p := layout.Pack(g, layout.Options{ChainKinds: []string{"commit"}})
+	p := layout.Pack(g, layout.Options{ChainKinds: []string{"commit"}, SeparateChains: true})
 	nodes := byID(p)
 
 	if nodes["c1"].HasParent {
@@ -433,5 +434,129 @@ func TestSubtreesStayNestedAlongsideAChain(t *testing.T) {
 	}
 	if got, want := nodes["sub"].Parent, "t2"; got != want {
 		t.Errorf("sub nested in %q, want %q: tree is not a declared chain kind", got, want)
+	}
+}
+
+// TestMaxChainBoundsTheDepth is the scaling fix: nesting spends a constant factor
+// of scale per link, so an uncapped history consumes the whole zoom range.
+func TestMaxChainBoundsTheDepth(t *testing.T) {
+	// A ten-commit history, each commit carrying a tree of its own.
+	nodes := []graph.Node[string]{}
+	for i := 10; i >= 1; i-- {
+		kids := []string{fmt.Sprintf("t%d", i)}
+		if i > 1 {
+			kids = append([]string{fmt.Sprintf("c%d", i-1)}, kids...)
+		}
+		nodes = append(nodes,
+			graph.Node[string]{ID: fmt.Sprintf("c%d", i), Kind: "commit", Children: kids},
+			graph.Node[string]{ID: fmt.Sprintf("t%d", i), Kind: "tree", Children: []string{fmt.Sprintf("b%d", i)}},
+			graph.Node[string]{ID: fmt.Sprintf("b%d", i), Kind: "blob"},
+		)
+	}
+	g := mustGraph(t, graph.NewMemorySource([]string{"c10"}, nodes...))
+
+	full := layout.Pack(g, layout.Options{ChainKinds: []string{"commit"}})
+	capped := layout.Pack(g, layout.Options{ChainKinds: []string{"commit"}, MaxChain: 3})
+
+	if full.Omitted != 0 {
+		t.Errorf("uncapped packing omitted %d nodes, want none", full.Omitted)
+	}
+	if capped.Omitted == 0 {
+		t.Fatal("capped packing omitted nothing, want the tail of the chain dropped")
+	}
+
+	commits := func(p *layout.Packing[string]) int {
+		n := 0
+		for _, x := range p.Nodes {
+			if x.Kind == "commit" {
+				n++
+			}
+		}
+		return n
+	}
+	if got, want := commits(capped), 3; got != want {
+		t.Errorf("%d commits kept, want %d", got, want)
+	}
+	if commits(full) != 10 {
+		t.Errorf("%d commits without a cap, want 10", commits(full))
+	}
+
+	// The whole point: the newest commit stays legible instead of shrinking away.
+	deepest := func(p *layout.Packing[string]) int {
+		d := 0
+		for _, x := range p.Nodes {
+			d = max(d, x.Depth)
+		}
+		return d
+	}
+	if deepest(capped) >= deepest(full) {
+		t.Errorf("capped depth %d, uncapped %d, want the cap to be shallower", deepest(capped), deepest(full))
+	}
+
+	// The last link kept says what went missing.
+	var marked int
+	for _, x := range capped.Nodes {
+		if x.Truncated {
+			marked++
+			if x.Omitted == 0 {
+				t.Errorf("%s is truncated but reports nothing omitted", x.ID)
+			}
+		}
+	}
+	if marked != 1 {
+		t.Errorf("%d truncated nodes, want exactly 1", marked)
+	}
+}
+
+// TestMaxChainKeepsSharedContent checks the cap only drops what nothing else
+// refers to: a blob still reachable from a kept commit survives.
+func TestMaxChainKeepsSharedContent(t *testing.T) {
+	g := mustGraph(t, graph.NewMemorySource([]string{"c3"},
+		graph.Node[string]{ID: "c3", Kind: "commit", Children: []string{"c2", "t3"}},
+		graph.Node[string]{ID: "c2", Kind: "commit", Children: []string{"c1", "t2"}},
+		graph.Node[string]{ID: "c1", Kind: "commit", Children: []string{"t1"}},
+		graph.Node[string]{ID: "t3", Kind: "tree", Children: []string{"shared"}},
+		graph.Node[string]{ID: "t2", Kind: "tree", Children: []string{"shared"}},
+		graph.Node[string]{ID: "t1", Kind: "tree", Children: []string{"shared", "old"}},
+		graph.Node[string]{ID: "shared", Kind: "blob"},
+		graph.Node[string]{ID: "old", Kind: "blob"},
+	))
+	p := layout.Pack(g, layout.Options{ChainKinds: []string{"commit"}, MaxChain: 2})
+	nodes := byID(p)
+
+	if _, ok := nodes["shared"]; !ok {
+		t.Error("shared blob was dropped, but c3 and c2 still reach it")
+	}
+	if _, ok := nodes["old"]; ok {
+		t.Error("old blob was kept, but only the dropped commit reached it")
+	}
+	if _, ok := nodes["c1"]; ok {
+		t.Error("c1 was kept, want the chain cut at two links")
+	}
+}
+
+// TestMinRingLeavesRoomForALabel is the readability fix: a container whose child
+// nearly fills it has no ring to write in.
+func TestMinRingLeavesRoomForALabel(t *testing.T) {
+	g := mustGraph(t, graph.NewMemorySource([]string{"outer"},
+		graph.Node[string]{ID: "outer", Kind: "commit", Children: []string{"inner"}},
+		graph.Node[string]{ID: "inner", Kind: "tree", Children: []string{"a", "b", "c"}},
+		graph.Node[string]{ID: "a", Kind: "blob"},
+		graph.Node[string]{ID: "b", Kind: "blob"},
+		graph.Node[string]{ID: "c", Kind: "blob"},
+	))
+
+	tight := layout.Pack(g, layout.Options{MinRing: -1})
+	roomy := layout.Pack(g, layout.Options{MinRing: 0.25})
+
+	ring := func(p *layout.Packing[string]) float64 {
+		n := byID(p)
+		return (n["outer"].R - n["inner"].R) / n["outer"].R
+	}
+	if got := ring(tight); got > 0.2 {
+		t.Errorf("ring without a minimum = %.2f, want it tight", got)
+	}
+	if got := ring(roomy); got < 0.25-epsilon {
+		t.Errorf("ring with MinRing 0.25 = %.2f, want at least 0.25", got)
 	}
 }

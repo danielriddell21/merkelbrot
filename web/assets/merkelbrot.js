@@ -521,6 +521,14 @@
 			ctx.font = fontOf(size);
 			ctx.fillStyle = ink(0.72);
 			wrapInto(label, v.sx, v.sy - v.r + ring / 2, v.r * 1.5, size * 1.2, 1);
+
+			// A capped chain says what it left out, so a truncated history never
+			// passes for a complete one.
+			if (v.node.omitted) {
+				ctx.font = fontOf(Math.min(13, size * 0.85));
+				ctx.fillStyle = ink(0.5);
+				ctx.fillText("+" + v.node.omitted + " earlier", v.sx, v.sy + v.r - ring / 2);
+			}
 		}
 	}
 

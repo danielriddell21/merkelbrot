@@ -42,7 +42,7 @@ func ExampleBuilder_Scene() {
 	// Output:
 	// title: payments
 	// kinds: [transaction log entry]
-	// stats: {Nodes:6 Links:0 Shared:0 Leaves:3 MaxDepth:2}
+	// stats: {Nodes:6 Links:0 Shared:0 Leaves:3 MaxDepth:2 Omitted:0}
 	// txn depth=0 leaf=false fields=0
 	// log depth=1 leaf=false fields=0
 	// posting depth=1 leaf=false fields=0
