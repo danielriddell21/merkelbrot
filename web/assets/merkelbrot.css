@@ -153,6 +153,82 @@ body {
 	color: var(--muted);
 }
 
+/* The find panel is the one part of the overlay that takes input, so it opts back
+   into pointer events that the rest of the overlay gives up. */
+.hud-find {
+	top: 14px;
+	left: 50%;
+	transform: translateX(-50%);
+	width: min(46ch, 80vw);
+	max-width: none;
+	padding: 8px;
+	pointer-events: auto;
+}
+
+.hud-find input {
+	width: 100%;
+	box-sizing: border-box;
+	font: inherit;
+	font-size: 13px;
+	color: var(--fg);
+	background: transparent;
+	border: 0;
+	border-bottom: 1px solid var(--edge);
+	padding: 4px 2px 7px;
+	outline: none;
+}
+
+.hud-find ul {
+	list-style: none;
+	margin: 6px 0 0;
+	padding: 0;
+	max-height: 46vh;
+	overflow-y: auto;
+}
+
+.hud-find li {
+	display: flex;
+	gap: 8px;
+	align-items: baseline;
+	padding: 4px 6px;
+	border-radius: 6px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.hud-find li[aria-selected="true"] {
+	background: var(--edge);
+}
+
+.hud-find li i {
+	font-style: normal;
+	color: var(--muted);
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+	flex: none;
+	width: 8ch;
+}
+
+.hud-find li b {
+	font-weight: 500;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.hud-find li u {
+	text-decoration: none;
+	color: var(--muted);
+	margin-left: auto;
+	padding-left: 10px;
+	font-variant-numeric: tabular-nums;
+}
+
+.hud-find p {
+	margin: 8px 6px 4px;
+	color: var(--muted);
+}
+
 .hud-help {
 	bottom: 14px;
 	right: 14px;

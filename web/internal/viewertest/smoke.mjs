@@ -136,6 +136,27 @@ async function run(source) {
 	await page.keyboard.press("d");
 	await page.waitForTimeout(120);
 
+	// Find a node by its label and fly to it, which is the one part of the page
+	// that takes typed input.
+	const target = await page.evaluate(() => {
+		const n = window.merkelbrot.scene.nodes.find((x) => x.label && x.label.length > 2);
+		return n ? n.label : null;
+	});
+	check(source.name, target !== null, "no node carries a label to search for");
+	if (target) {
+		await page.keyboard.press("/");
+		await page.waitForTimeout(80);
+		await page.keyboard.type(target.slice(0, 6));
+		await page.waitForTimeout(150);
+		const hits = await page.evaluate(() => document.querySelectorAll("#find-list li").length);
+		check(source.name, hits > 0, `searching for ${JSON.stringify(target.slice(0, 6))} found nothing`);
+		await page.keyboard.press("Enter");
+		await page.waitForTimeout(400);
+		const closed = await page.evaluate(() => document.getElementById("find").hidden);
+		check(source.name, closed, "the find box stayed open after a choice");
+		check(source.name, await painted(page), "drew nothing after flying to a match");
+	}
+
 	check(source.name, errors.length === 0, errors.join(" | "));
 	await page.close();
 }

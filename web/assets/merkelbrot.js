@@ -869,7 +869,130 @@
 	canvas.addEventListener("pointercancel", function () { pointer = null; canvas.classList.remove("dragging"); });
 	canvas.addEventListener("pointerleave", function () { tip.hidden = true; });
 
+	// Finding a node.
+	//
+	// Colour tells you when two things are identical, but not which one you are
+	// looking at. On a graph of any size the only way to reach a particular file or
+	// digest is to know where it already is, so "/" opens a box that matches on
+	// label, ID and hash and flies the camera to whatever is chosen.
+	var find = document.getElementById("find");
+	var findInput = document.getElementById("find-input");
+	var findList = document.getElementById("find-list");
+	var findHits = [];
+	var findAt = 0;
+
+	var FIND_LIMIT = 12;
+
+	function openFind() {
+		find.hidden = false;
+		findInput.value = "";
+		runFind("");
+		findInput.focus();
+	}
+
+	function closeFind() {
+		find.hidden = true;
+		findInput.blur();
+	}
+
+	// A prefix of an ID or hash is how a content-addressed node is referred to, and
+	// a substring is how a filename is remembered, so both count as a match and the
+	// prefixes are offered first.
+	function runFind(query) {
+		var q = query.trim().toLowerCase();
+		findHits = [];
+		findAt = 0;
+		if (q) {
+			var prefix = [];
+			var contains = [];
+			for (var i = 0; i < scene.nodes.length; i++) {
+				var n = scene.nodes[i];
+				var label = (n.label || "").toLowerCase();
+				if (n.id.toLowerCase().indexOf(q) === 0 || (n.hash || "").toLowerCase().indexOf(q) === 0) {
+					prefix.push(n);
+				} else if (label.indexOf(q) >= 0) {
+					contains.push(n);
+				}
+				if (prefix.length >= FIND_LIMIT) break;
+			}
+			findHits = prefix.concat(contains).slice(0, FIND_LIMIT);
+		}
+		renderFind(q);
+	}
+
+	function renderFind(q) {
+		if (!q) {
+			findList.innerHTML = "<p>type to match a label, an ID or a hash</p>";
+			return;
+		}
+		if (!findHits.length) {
+			findList.innerHTML = "<p>nothing matches</p>";
+			return;
+		}
+		findList.innerHTML = findHits
+			.map(function (n, i) {
+				return (
+					'<li role="option" data-at="' + i + '" aria-selected="' + (i === findAt) + '">' +
+					"<i>" + escapeHTML(n.kind || "node") + "</i>" +
+					"<b>" + escapeHTML(n.label || n.id) + "</b>" +
+					"<u>" + escapeHTML((n.hash || n.id).slice(0, 8)) + "</u></li>"
+				);
+			})
+			.join("");
+	}
+
+	function moveFind(by) {
+		if (!findHits.length) return;
+		findAt = (findAt + by + findHits.length) % findHits.length;
+		renderFind(findInput.value.trim());
+		var row = findList.children[findAt];
+		if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+	}
+
+	function chooseFind() {
+		var node = findHits[findAt];
+		if (!node) return;
+		closeFind();
+		focus(node);
+	}
+
+	findInput.addEventListener("input", function () { runFind(findInput.value); });
+	findList.addEventListener("click", function (e) {
+		var row = e.target.closest("li");
+		if (!row) return;
+		findAt = Number(row.dataset.at);
+		chooseFind();
+	});
+	findInput.addEventListener("keydown", function (e) {
+		switch (e.key) {
+			case "Escape":
+				e.preventDefault();
+				closeFind();
+				break;
+			case "Enter":
+				e.preventDefault();
+				chooseFind();
+				break;
+			case "ArrowDown":
+				e.preventDefault();
+				moveFind(1);
+				break;
+			case "ArrowUp":
+				e.preventDefault();
+				moveFind(-1);
+				break;
+		}
+	});
+
 	window.addEventListener("keydown", function (e) {
+		// While the find box is open it owns the keyboard; its own handler deals with
+		// the keys that mean something there.
+		if (!find.hidden) return;
+		if (e.key === "/") {
+			e.preventDefault();
+			openFind();
+			return;
+		}
 		switch (e.key) {
 			case "Escape":
 			case "Backspace":

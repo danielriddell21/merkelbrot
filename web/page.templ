@@ -22,6 +22,10 @@ templ page(title string, s *scene.Scene, sceneJSON, css, js string) {
 				@stats(s.Stats)
 			</header>
 			@legend(s)
+			<div class="hud hud-find" id="find" hidden>
+				<input id="find-input" type="text" placeholder="find a node" autocomplete="off" autocapitalize="off" spellcheck="false"/>
+				<ul id="find-list"></ul>
+			</div>
 			<div class="hud hud-crumb" id="crumb" hidden></div>
 			<div class="tip" id="tip" hidden></div>
 			<footer class="hud hud-help">
@@ -30,6 +34,7 @@ templ page(title string, s *scene.Scene, sceneJSON, css, js string) {
 				<span><kbd>click</kbd> focus</span>
 				<span><kbd>esc</kbd> out</span>
 				<span><kbd>f</kbd> fit</span>
+				<span><kbd>/</kbd> find</span>
 				<span><kbd>d</kbd> derived</span>
 			</footer>
 			@templ.Raw(`<script type="application/json" id="scene">` + sceneJSON + `</script>`)
