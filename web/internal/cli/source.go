@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/danielriddell21/merkelbrot/examples/gitrepo"
 	"github.com/danielriddell21/merkelbrot/examples/ledger"
@@ -22,6 +23,7 @@ type options struct {
 	maxDepth int
 	maxNodes int
 	prove    string
+	diff     string
 	addr     string
 	separate bool
 	maxChain int
@@ -54,14 +56,65 @@ func (o *options) build() (*scene.Scene, error) {
 	}))
 
 	if o.prove != "" {
+		id, err := resolve(g, o.prove)
+		if err != nil {
+			return nil, err
+		}
 		roots := slices.Collect(g.Roots())
-		path, ok := proof.Inclusion(g, o.prove, roots[0])
+		path, ok := proof.Inclusion(g, id, roots[0])
 		if !ok {
-			return nil, fmt.Errorf("no inclusion path from %s to %s", o.prove, roots[0])
+			return nil, fmt.Errorf("no inclusion path from %s to %s", id, roots[0])
 		}
 		s.Add(b.Inclusion(path)...)
 	}
+
+	if o.diff != "" {
+		before, after, ok := strings.Cut(o.diff, "..")
+		if !ok || before == "" || after == "" {
+			return nil, fmt.Errorf(`--diff wants two node IDs separated by "..", got %q`, o.diff)
+		}
+		oldID, err := resolve(g, before)
+		if err != nil {
+			return nil, err
+		}
+		newID, err := resolve(g, after)
+		if err != nil {
+			return nil, err
+		}
+		d, ok := proof.Consistency(g, oldID, newID)
+		if !ok {
+			return nil, fmt.Errorf("cannot compare %s with %s", oldID, newID)
+		}
+		s.Add(b.Consistency(d)...)
+	}
 	return s, nil
+}
+
+// resolve turns a node reference into an ID, accepting any unique prefix.
+//
+// Content-addressed IDs are long, and a reference typed by hand is almost always
+// the first few characters of one, as it would be for git.
+func resolve(g *graph.Graph[string], ref string) (string, error) {
+	if _, ok := g.Node(ref); ok {
+		return ref, nil
+	}
+	var found []string
+	for id := range g.IDs() {
+		if strings.HasPrefix(id, ref) {
+			found = append(found, id)
+			if len(found) > 1 {
+				break
+			}
+		}
+	}
+	switch len(found) {
+	case 0:
+		return "", fmt.Errorf("no node with ID %q", ref)
+	case 1:
+		return found[0], nil
+	default:
+		return "", fmt.Errorf("%q matches more than one node", ref)
+	}
 }
 
 // buildWith reads the selected source and lays it out with the given limit on how
