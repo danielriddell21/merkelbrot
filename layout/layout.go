@@ -118,6 +118,10 @@ type Placed[K comparable] struct {
 	// cut short, and Omitted counts the nodes dropped with the rest of it.
 	Truncated bool
 	Omitted   int
+	// Unread counts the node's references that were never read, because the graph
+	// was materialised under a [github.com/danielriddell21/merkelbrot/graph.Limit].
+	// It is zero for a node read in full.
+	Unread int
 	// Payload holds the node's fields, packed inside it.
 	Payload []Slot
 }
@@ -218,6 +222,9 @@ type Packing[K comparable] struct {
 	Bounds Circle
 	// Omitted counts the nodes left out because [Options.MaxChain] cut the chain.
 	Omitted int
+	// Unread counts the references the graph was never read far enough to follow,
+	// summed over every placed node.
+	Unread int
 	// MaxChain echoes the [Options.MaxChain] the packing was made with, so a caller
 	// showing a truncated history knows what to ask for to see more of it.
 	MaxChain int
@@ -239,6 +246,9 @@ func Pack[K comparable](g *graph.Graph[K], opts Options) *Packing[K] {
 	p.size()
 	out := p.place()
 	out.MaxChain = p.opts.MaxChain
+	for _, n := range out.Nodes {
+		out.Unread += n.Unread
+	}
 	return out
 }
 
@@ -599,6 +609,7 @@ func (p *packer[K]) placed(v, parent int, c Circle) Placed[K] {
 		Shared:    countAtLeastTwo(p.g, id),
 		Truncated: p.truncated[v],
 		Omitted:   p.omitted[v],
+		Unread:    p.g.Unread(id),
 	}
 	if parent != p.start {
 		out.Parent, out.HasParent = p.ids[parent], true

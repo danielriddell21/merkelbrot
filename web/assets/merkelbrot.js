@@ -615,10 +615,10 @@
 			// passes for a complete one. Where there is a server to ask, the note is
 			// also the way to ask it: laying the graph out again is the only way to
 			// get the rest, and only a server can do that.
+			var noteSize = Math.min(13, size * 0.85);
+			var ny = v.sy + v.r - ring / 2;
 			if (v.node.omitted) {
-				var noteSize = Math.min(13, size * 0.85);
 				var note = "+" + v.node.omitted + " earlier";
-				var ny = v.sy + v.r - ring / 2;
 				ctx.font = fontOf(noteSize);
 				ctx.fillStyle = ink(canExpand ? 0.66 : 0.5);
 				ctx.fillText(note, v.sx, ny);
@@ -632,6 +632,17 @@
 				ctx.strokeStyle = ink(0.35);
 				ctx.stroke();
 				moreMarkers.push({ x: v.sx - nw / 2, y: ny - noteSize, w: nw, h: noteSize * 1.8 });
+				continue;
+			}
+
+			// A node the source was never read far enough to follow says so too, or
+			// a graph read under a limit passes for one read whole. There is nothing
+			// to click: reading further is a decision for whoever ran the command,
+			// not something the page can ask for.
+			if (v.node.unread) {
+				ctx.font = fontOf(noteSize);
+				ctx.fillStyle = ink(0.45);
+				ctx.fillText("+" + v.node.unread + " unread", v.sx, ny);
 			}
 		}
 	}

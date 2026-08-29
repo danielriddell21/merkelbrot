@@ -860,3 +860,30 @@ func TestEnclosingFallbackStillEncloses(t *testing.T) {
 		}
 	}
 }
+
+// TestUnreadIsCarriedThrough passes the graph's read frontier on to the renderer,
+// so a graph read under a limit is never drawn as though it were complete.
+func TestUnreadIsCarriedThrough(t *testing.T) {
+	nodes := []graph.Node[string]{{ID: "root", Kind: "tree"}}
+	for i := range 20 {
+		id := fmt.Sprintf("b%d", i)
+		nodes[0].Children = append(nodes[0].Children, id)
+		nodes = append(nodes, graph.Node[string]{ID: id, Kind: "blob"})
+	}
+	g, err := graph.NewLimited(graph.NewMemorySource([]string{"root"}, nodes...), graph.Limit{MaxNodes: 6})
+	if err != nil {
+		t.Fatalf("NewLimited: %v", err)
+	}
+
+	p := layout.Pack(g, layout.Options{})
+	if p.Unread == 0 {
+		t.Fatal("the packing reports nothing unread, want the frontier carried through")
+	}
+	nodesByID := byID(p)
+	if got := nodesByID["root"].Unread; got == 0 {
+		t.Error("root reports nothing unread, want the references the read never reached")
+	}
+	if got := nodesByID["b0"].Unread; got != 0 {
+		t.Errorf("a node read in full reports %d unread, want 0", got)
+	}
+}

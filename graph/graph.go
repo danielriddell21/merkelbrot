@@ -152,6 +152,7 @@ type Graph[K comparable] struct {
 	order    []K
 	roots    []K
 	frontier []K
+	unread   map[K]int
 	tree     bool
 }
 
@@ -310,7 +311,11 @@ func (g *Graph[K]) trim() {
 			}
 		}
 		if len(kept) != len(n.Children) {
+			if g.unread == nil {
+				g.unread = make(map[K]int)
+			}
 			g.frontier = append(g.frontier, id)
+			g.unread[id] = len(n.Children) - len(kept)
 			n.Children = kept
 			g.nodes[id] = n
 		}
@@ -370,6 +375,14 @@ func (g *Graph[K]) Frontier() iter.Seq[K] { return slices.Values(g.frontier) }
 // Truncated reports whether a [Limit] stopped the walk before the whole source
 // had been read.
 func (g *Graph[K]) Truncated() bool { return len(g.frontier) > 0 }
+
+// Unread reports how many of a node's references were dropped because a [Limit]
+// stopped the walk before reaching them, and zero for a node read in full.
+//
+// It counts references, not everything behind them: each one may lead to a
+// subtree of any size, so this is the least that is missing rather than all of
+// it.
+func (g *Graph[K]) Unread(id K) int { return g.unread[id] }
 
 // Len reports the number of nodes in the graph.
 func (g *Graph[K]) Len() int { return len(g.order) }

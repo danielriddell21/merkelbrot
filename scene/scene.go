@@ -92,8 +92,11 @@ type Node struct {
 	Leaf   bool   `json:"leaf,omitempty"`
 	Shared bool   `json:"shared,omitempty"`
 	// Omitted counts what a chain cap dropped behind this node, zero if nothing was.
-	Omitted int     `json:"omitted,omitempty"`
-	Fields  []Field `json:"fields,omitempty"`
+	Omitted int `json:"omitted,omitempty"`
+	// Unread counts the node's references the source was never read far enough to
+	// follow, zero for a node read in full.
+	Unread int     `json:"unread,omitempty"`
+	Fields []Field `json:"fields,omitempty"`
 }
 
 // Link is an edge that containment does not already show.
@@ -121,6 +124,8 @@ type Stats struct {
 	// Chain is the limit on nested chain links the layout was given, zero for none.
 	// A viewer showing what was left out needs it to ask for more.
 	Chain int `json:"chain,omitempty"`
+	// Unread counts references the source was never read far enough to follow.
+	Unread int `json:"unread,omitempty"`
 }
 
 // Scene is a flat, serialisable description of a laid-out graph.
@@ -172,6 +177,7 @@ func (b Builder[K]) Scene(p *layout.Packing[K]) *Scene {
 			Leaf:    n.Leaf,
 			Shared:  n.Shared,
 			Omitted: n.Omitted,
+			Unread:  n.Unread,
 		}
 		if n.HasParent {
 			out.Parent = b.id(n.Parent)
@@ -207,6 +213,7 @@ func (b Builder[K]) Scene(p *layout.Packing[K]) *Scene {
 	s.Stats.Links = len(s.Links)
 	s.Stats.Omitted = p.Omitted
 	s.Stats.Chain = p.MaxChain
+	s.Stats.Unread = p.Unread
 	return s
 }
 

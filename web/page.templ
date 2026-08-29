@@ -51,6 +51,9 @@ templ stats(st scene.Stats) {
 		if st.Omitted > 0 {
 			@stat("hidden", fmt.Sprint(st.Omitted))
 		}
+		if st.Unread > 0 {
+			@stat("unread", fmt.Sprint(st.Unread))
+		}
 	</dl>
 }
 

@@ -156,6 +156,12 @@ func stats(st scene.Stats) templ.Component {
 				return templ_7745c5c3_Err
 			}
 		}
+		if st.Unread > 0 {
+			templ_7745c5c3_Err = stat("unread", fmt.Sprint(st.Unread)).Render(ctx, templ_7745c5c3_Buffer)
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
 		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</dl>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
@@ -192,7 +198,7 @@ func stat(name, value string) templ.Component {
 		var templ_7745c5c3_Var6 string
 		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(name)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 59, Col: 12}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 62, Col: 12}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
@@ -205,7 +211,7 @@ func stat(name, value string) templ.Component {
 		var templ_7745c5c3_Var7 string
 		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(value)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 60, Col: 13}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 63, Col: 13}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {
@@ -253,7 +259,7 @@ func legend(s *scene.Scene) templ.Component {
 				var templ_7745c5c3_Var9 string
 				templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.ResolveAttributeValue(fmt.Sprint(i))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 69, Col: 34}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 72, Col: 34}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var9)
 				if templ_7745c5c3_Err != nil {
@@ -266,7 +272,7 @@ func legend(s *scene.Scene) templ.Component {
 				var templ_7745c5c3_Var10 string
 				templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(kind)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 69, Col: 43}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 72, Col: 43}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
 				if templ_7745c5c3_Err != nil {
@@ -294,7 +300,7 @@ func legend(s *scene.Scene) templ.Component {
 					var templ_7745c5c3_Var11 string
 					templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.ResolveAttributeValue(h.Kind)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 75, Col: 28}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 78, Col: 28}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var11)
 					if templ_7745c5c3_Err != nil {
@@ -307,7 +313,7 @@ func legend(s *scene.Scene) templ.Component {
 					var templ_7745c5c3_Var12 string
 					templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(h.Name)
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 75, Col: 39}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `page.templ`, Line: 78, Col: 39}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 					if templ_7745c5c3_Err != nil {

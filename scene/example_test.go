@@ -35,14 +35,15 @@ func ExampleBuilder_Scene() {
 
 	fmt.Println("title:", s.Title)
 	fmt.Println("kinds:", s.Kinds)
-	fmt.Printf("stats: %+v\n", s.Stats)
+	fmt.Printf("stats: %d nodes, %d leaves, %d shared, depth %d\n",
+		s.Stats.Nodes, s.Stats.Leaves, s.Stats.Shared, s.Stats.MaxDepth)
 	for _, n := range s.Nodes {
 		fmt.Printf("%s depth=%d leaf=%t fields=%d\n", n.ID, n.Depth, n.Leaf, len(n.Fields))
 	}
 	// Output:
 	// title: payments
 	// kinds: [transaction log entry]
-	// stats: {Nodes:6 Links:0 Shared:0 Leaves:3 MaxDepth:2 Omitted:0 Chain:0}
+	// stats: 6 nodes, 3 leaves, 0 shared, depth 2
 	// txn depth=0 leaf=false fields=0
 	// log depth=1 leaf=false fields=0
 	// posting depth=1 leaf=false fields=0
