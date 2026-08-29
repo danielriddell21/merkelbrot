@@ -3,6 +3,7 @@ package web_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -139,5 +140,106 @@ func TestHandlerServesTheSceneAsJSON(t *testing.T) {
 	}
 	if len(got.Nodes) != len(want.Nodes) {
 		t.Errorf("%d nodes, want %d", len(got.Nodes), len(want.Nodes))
+	}
+}
+
+// growable serves a scene that can be laid out again, standing in for the CLI's
+// serve command.
+func growable(t *testing.T) *web.Server {
+	t.Helper()
+	g, err := graph.New(ledger.New(ledger.Config{Seed: 1, Transactions: 12}))
+	if err != nil {
+		t.Fatalf("graph.New: %v", err)
+	}
+	pack := func(maxChain int) *scene.Scene {
+		return scene.Builder[string]{Title: "test ledger"}.Scene(layout.Pack(g, layout.Options{
+			ChainKinds: []string{"transaction"},
+			MaxChain:   maxChain,
+		}))
+	}
+	return &web.Server{
+		Scene:  pack(3),
+		Expand: func(maxChain int) (*scene.Scene, error) { return pack(maxChain), nil },
+	}
+}
+
+// TestExpandReturnsTheHistoryTheCapLeftOut is the point of the chain parameter: a
+// page showing a truncated history can ask for the rest of it.
+func TestExpandReturnsTheHistoryTheCapLeftOut(t *testing.T) {
+	srv := httptest.NewServer(growable(t).Handler())
+	defer srv.Close()
+
+	get := func(path string) *scene.Scene {
+		t.Helper()
+		resp, err := srv.Client().Get(srv.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s: status %d", path, resp.StatusCode)
+		}
+		var s scene.Scene
+		if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
+			t.Fatalf("decoding %s: %v", path, err)
+		}
+		return &s
+	}
+
+	capped := get("/scene.json")
+	if capped.Stats.Omitted == 0 {
+		t.Fatal("the capped scene omits nothing, so there is nothing to expand")
+	}
+
+	full := get("/scene.json?chain=0")
+	if full.Stats.Omitted != 0 {
+		t.Errorf("the expanded scene still omits %d nodes, want the whole history", full.Stats.Omitted)
+	}
+	if len(full.Nodes) <= len(capped.Nodes) {
+		t.Errorf("expanded to %d nodes from %d, want more", len(full.Nodes), len(capped.Nodes))
+	}
+}
+
+func TestExpandServesThePageToo(t *testing.T) {
+	srv := httptest.NewServer(growable(t).Handler())
+	defer srv.Close()
+
+	resp, err := srv.Client().Get(srv.URL + "/?chain=0")
+	if err != nil {
+		t.Fatalf("GET /?chain=0: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d, want 200", resp.StatusCode)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), `id="scene"`) {
+		t.Error("the expanded page carries no scene")
+	}
+}
+
+// TestExpandIsRefusedWithoutAWayToDoIt covers the exported page's case: there is
+// nobody to ask, so asking has to fail rather than silently return the same view.
+func TestExpandIsRefusedWithoutAWayToDoIt(t *testing.T) {
+	srv := httptest.NewServer(web.Handler(demo(t)))
+	defer srv.Close()
+
+	for _, tc := range []struct {
+		path string
+		want int
+	}{
+		{"/scene.json?chain=0", http.StatusNotImplemented},
+		{"/?chain=0", http.StatusNotImplemented},
+		{"/scene.json?chain=nonsense", http.StatusBadRequest},
+		{"/scene.json?chain=-1", http.StatusBadRequest},
+	} {
+		resp, err := srv.Client().Get(srv.URL + tc.path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", tc.path, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != tc.want {
+			t.Errorf("GET %s: status %d, want %d", tc.path, resp.StatusCode, tc.want)
+		}
 	}
 }

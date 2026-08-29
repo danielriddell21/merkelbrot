@@ -63,6 +63,17 @@ func (o *options) build() (*scene.Scene, error) {
 	return s, nil
 }
 
+// buildWith reads the selected source and lays it out with the given limit on how
+// many links of a chain are nested, which is what a served page asks for when it
+// wants history the limit left out.
+func (o *options) buildWith(maxChain int) (*scene.Scene, error) {
+	// The options are copied so that answering one request for more history does
+	// not change what every later request gets.
+	with := *o
+	with.maxChain = maxChain
+	return with.build()
+}
+
 // open returns the source, its title, and the kinds whose same-kind edges are
 // history rather than content.
 func (o *options) open() (graph.Source[string], string, []string, error) {

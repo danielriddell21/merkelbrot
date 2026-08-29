@@ -545,7 +545,30 @@
 		ctx.setLineDash([]);
 	}
 
+	// Only a server can lay the graph out again, so only a served page offers to.
+	var canExpand = location.protocol === "http:" || location.protocol === "https:";
+
+	// Where the "+N earlier" notes were drawn, so a click can land on one.
+	var moreMarkers = [];
+
+	function hitMore(x, y) {
+		for (var i = 0; i < moreMarkers.length; i++) {
+			var m = moreMarkers[i];
+			if (x >= m.x && x <= m.x + m.w && y >= m.y && y <= m.y + m.h) return true;
+		}
+		return false;
+	}
+
+	// Reload with the chain limit lifted. The server lays the whole history out and
+	// serves it back, which is why this is a navigation rather than a redraw.
+	function expandChain() {
+		var url = new URL(location.href);
+		url.searchParams.set("chain", "0");
+		location.href = url.toString();
+	}
+
 	function drawLabels(visible) {
+		moreMarkers.length = 0;
 		ctx.textAlign = "center";
 		ctx.textBaseline = "middle";
 		for (var i = 0; i < visible.length; i++) {
@@ -579,11 +602,26 @@
 			wrapInto(label, v.sx, v.sy - v.r + ring / 2, v.r * LABEL_STRIP * 2, size * 1.2, 1);
 
 			// A capped chain says what it left out, so a truncated history never
-			// passes for a complete one.
+			// passes for a complete one. Where there is a server to ask, the note is
+			// also the way to ask it: laying the graph out again is the only way to
+			// get the rest, and only a server can do that.
 			if (v.node.omitted) {
-				ctx.font = fontOf(Math.min(13, size * 0.85));
-				ctx.fillStyle = ink(0.5);
-				ctx.fillText("+" + v.node.omitted + " earlier", v.sx, v.sy + v.r - ring / 2);
+				var noteSize = Math.min(13, size * 0.85);
+				var note = "+" + v.node.omitted + " earlier";
+				var ny = v.sy + v.r - ring / 2;
+				ctx.font = fontOf(noteSize);
+				ctx.fillStyle = ink(canExpand ? 0.66 : 0.5);
+				ctx.fillText(note, v.sx, ny);
+				if (!canExpand) continue;
+
+				var nw = ctx.measureText(note).width;
+				ctx.beginPath();
+				ctx.moveTo(v.sx - nw / 2, ny + noteSize * 0.35);
+				ctx.lineTo(v.sx + nw / 2, ny + noteSize * 0.35);
+				ctx.lineWidth = 0.8;
+				ctx.strokeStyle = ink(0.35);
+				ctx.stroke();
+				moreMarkers.push({ x: v.sx - nw / 2, y: ny - noteSize, w: nw, h: noteSize * 1.8 });
 			}
 		}
 	}
@@ -799,6 +837,10 @@
 		pointer = null;
 		canvas.classList.remove("dragging");
 		if (!wasClick) return;
+		if (hitMore(e.offsetX, e.offsetY)) {
+			expandChain();
+			return;
+		}
 		var hit = hitTest(toWorldX(e.offsetX), toWorldY(e.offsetY));
 		if (hit) focus(hit);
 	}

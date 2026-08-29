@@ -45,9 +45,11 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/danielriddell21/merkelbrot/scene"
 )
@@ -85,14 +87,42 @@ func Render(ctx context.Context, w io.Writer, s *scene.Scene) error {
 	return nil
 }
 
+// Server serves the viewer over HTTP.
+type Server struct {
+	// Scene is served when no other is asked for.
+	Scene *scene.Scene
+	// Expand, when set, lays the graph out again with a different limit on how many
+	// links of a chain are nested, and is what lets a page ask for history that
+	// [github.com/danielriddell21/merkelbrot/layout.Options.MaxChain] left out. It
+	// is called with the requested limit, zero meaning no limit at all.
+	//
+	// Left nil, a request for more is refused and the page says so. An exported
+	// page has no server to ask, so it always says so.
+	Expand func(maxChain int) (*scene.Scene, error)
+}
+
 // Handler serves the viewer for a scene.
 //
 // It responds to GET / with the page and to GET /scene.json with the scene as
 // JSON. Any other path returns 404.
 func Handler(s *scene.Scene) http.Handler {
+	return (&Server{Scene: s}).Handler()
+}
+
+// Handler returns the HTTP handler for the server.
+//
+// Both GET / and GET /scene.json accept a chain query parameter asking for the
+// graph laid out again with that limit on nested chain links, zero meaning no
+// limit. Without [Server.Expand] set, such a request is refused with 501.
+func (srv *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		s, err := srv.sceneFor(r)
+		if err != nil {
+			http.Error(w, err.Error(), statusFor(err))
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err := Render(r.Context(), w, s); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -100,6 +130,11 @@ func Handler(s *scene.Scene) http.Handler {
 	})
 
 	mux.HandleFunc("GET /scene.json", func(w http.ResponseWriter, r *http.Request) {
+		s, err := srv.sceneFor(r)
+		if err != nil {
+			http.Error(w, err.Error(), statusFor(err))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		if err := s.WriteJSON(w); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -107,4 +142,33 @@ func Handler(s *scene.Scene) http.Handler {
 	})
 
 	return mux
+}
+
+// errNoExpand reports a request for more of the graph than this server can give.
+var errNoExpand = errors.New("web: this server cannot lay the graph out again")
+
+func statusFor(err error) int {
+	if errors.Is(err, errNoExpand) {
+		return http.StatusNotImplemented
+	}
+	return http.StatusBadRequest
+}
+
+func (srv *Server) sceneFor(r *http.Request) (*scene.Scene, error) {
+	raw := r.URL.Query().Get("chain")
+	if raw == "" {
+		return srv.Scene, nil
+	}
+	chain, err := strconv.Atoi(raw)
+	if err != nil || chain < 0 {
+		return nil, fmt.Errorf("web: chain must be a number of links, zero for no limit: %q", raw)
+	}
+	if srv.Expand == nil {
+		return nil, errNoExpand
+	}
+	s, err := srv.Expand(chain)
+	if err != nil {
+		return nil, fmt.Errorf("web: laying the graph out again: %w", err)
+	}
+	return s, nil
 }
