@@ -15,7 +15,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium } from "playwright";
+import { chromium, devices } from "playwright";
 
 const webDir = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const repoDir = resolve(webDir, "..");
@@ -157,8 +157,126 @@ async function run(source) {
 		check(source.name, await painted(page), "drew nothing after flying to a match");
 	}
 
+	// The arrows are the only way through the graph without a pointer.
+	await page.evaluate(() => window.merkelbrot.fit(false));
+	await page.waitForTimeout(120);
+	const trail = [];
+	for (const key of ["ArrowDown", "ArrowDown", "ArrowRight", "ArrowUp"]) {
+		await page.keyboard.press(key);
+		await page.waitForTimeout(180);
+		trail.push(await page.evaluate(() => {
+			const c = document.getElementById("crumb");
+			return c.hidden ? null : c.textContent.trim();
+		}));
+	}
+	check(source.name, trail[0] !== null, "the first arrow selected nothing");
+	check(source.name, new Set(trail).size > 1, `the arrows never moved: ${JSON.stringify(trail)}`);
+	check(source.name, (await page.evaluate(() => window.scrollY)) === 0, "an arrow scrolled the page");
+
+	// The picture is a canvas, so without a description a screen reader has nothing
+	// at all to go on.
+	const described = await page.evaluate(() => {
+		const c = document.getElementById("view");
+		return { role: c.getAttribute("role"), label: c.getAttribute("aria-label") || "" };
+	});
+	check(source.name, described.role === "img", "the canvas has no role");
+	check(source.name, /\d+ nodes/.test(described.label), `the canvas description says nothing useful: ${JSON.stringify(described.label)}`);
+
 	check(source.name, errors.length === 0, errors.join(" | "));
 	await page.close();
+}
+
+// Flying across the graph is animated, which a viewer who has asked for less
+// motion should not be given.
+try {
+	await stillness();
+} catch (e) {
+	check("reduced motion", false, String(e && e.message ? e.message : e));
+}
+
+async function stillness() {
+	const path = exportPage(sources[0]);
+	const settles = async (reduce) => {
+		const context = await browser.newContext({ reducedMotion: reduce ? "reduce" : "no-preference" });
+		const page = await context.newPage();
+		await page.goto("file://" + path);
+		await page.waitForTimeout(400);
+		const still = await page.evaluate(() => {
+			const c = document.getElementById("view");
+			const sample = () => {
+				const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+				let h = 0;
+				for (let i = 0; i < d.length; i += 997) h = (h * 31 + d[i]) >>> 0;
+				return h;
+			};
+			const s = window.merkelbrot.scene;
+			const node = s.nodes.find((n) => n.depth === 3) || s.nodes[1];
+			window.merkelbrot.focus(node.id, true);
+			const before = sample();
+			return new Promise((res) => setTimeout(() => res(before === sample()), 80));
+		});
+		await context.close();
+		return still;
+	};
+
+	check("reduced motion", (await settles(true)) === true, "a flight was still animating despite the preference");
+	check("reduced motion", (await settles(false)) === false, "nothing animated even without the preference, so the check proves nothing");
+}
+
+// Touch has no wheel, and the page turns the browser's own gestures off, so a
+// pinch is the only way to zoom on a phone. It is worth its own check because
+// nothing else on the page exercises a second pointer.
+try {
+	await pinches();
+} catch (e) {
+	check("pinch", false, String(e && e.message ? e.message : e));
+}
+
+async function pinches() {
+	const path = exportPage(sources[0]);
+	const context = await browser.newContext({ ...devices["Pixel 7"] });
+	const page = await context.newPage();
+	const errors = [];
+	page.on("pageerror", (e) => errors.push(String(e.message)));
+
+	await page.goto("file://" + path);
+	await page.waitForTimeout(500);
+
+	// How much of the canvas is painted stands in for how far in the view is.
+	const painting = () =>
+		page.evaluate(() => {
+			const c = document.getElementById("view");
+			const { data } = c.getContext("2d").getImageData(0, 0, c.width, c.height);
+			let lit = 0;
+			for (let i = 0; i < data.length; i += 4) {
+				if (data[i] + data[i + 1] + data[i + 2] > 90) lit++;
+			}
+			return lit;
+		});
+
+	const cdp = await context.newCDPSession(page);
+	const touch = (type, points) =>
+		cdp.send("Input.dispatchTouchEvent", {
+			type,
+			touchPoints: points.map((p, id) => ({ x: p.x, y: p.y, id })),
+		});
+
+	const before = await painting();
+	await touch("touchStart", [{ x: 150, y: 300 }, { x: 250, y: 400 }]);
+	for (let k = 1; k <= 6; k++) {
+		await touch("touchMove", [
+			{ x: 150 - k * 12, y: 300 - k * 12 },
+			{ x: 250 + k * 12, y: 400 + k * 12 },
+		]);
+		await page.waitForTimeout(50);
+	}
+	await touch("touchEnd", []);
+	await page.waitForTimeout(250);
+	const after = await painting();
+
+	check("pinch", after > before * 1.2, `spreading two fingers did not zoom in (${before} then ${after})`);
+	check("pinch", errors.length === 0, errors.join(" | "));
+	await context.close();
 }
 
 await browser.close();

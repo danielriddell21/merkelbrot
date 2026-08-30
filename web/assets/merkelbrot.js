@@ -40,11 +40,31 @@
 	// Two nodes with the same hash therefore get exactly the same colour, which is
 	// the Merkle property made visible: identical content looks identical wherever
 	// it is reached from.
-	var HUES = [215, 42, 145, 340, 272, 178, 22, 205];
-	var PALETTE = [
-		"#4c8dff", "#f2b134", "#3fbf7f", "#e0607e",
-		"#9b7ede", "#38b6b0", "#e08a3c", "#7f8c9b",
+	// Each kind anchors a hue and a lightness; the node's own hash then shifts it
+	// within a band around that anchor.
+	//
+	// The anchors are separated on lightness as well as hue, and were chosen by
+	// simulating dichromatic vision over the whole hue/lightness grid and keeping
+	// the set whose closest pair stays furthest apart under normal, deuteranopic,
+	// protanopic and tritanopic vision alike. Hue on its own is not enough: red and
+	// green are the pair most often confused, and a palette that leans on hue would
+	// leave a colour-blind reader unable to tell a tree from a blob.
+	//
+	// The first kinds are also the darkest, because a source names its containers
+	// first and a container is drawn largest: a light one washes out everything
+	// nested inside it.
+	var KINDS = [
+		{ h: 204, l: 34 }, // deep blue
+		{ h: 36, l: 58 },  // amber
+		{ h: 180, l: 49 }, // teal
+		{ h: 0, l: 32 },   // deep red
+		{ h: 267, l: 58 }, // violet
+		{ h: 300, l: 68 }, // orchid
+		{ h: 27, l: 43 },  // umber
+		{ h: 294, l: 37 }, // aubergine
 	];
+
+	function kindAnchor(i) { return KINDS[((i % KINDS.length) + KINDS.length) % KINDS.length]; }
 	var MARKS = {
 		path: "#ffd166",
 		evidence: "#8ecae6",
@@ -98,17 +118,18 @@
 		var got = colours.get(node.id);
 		if (got) return got;
 
-		var i = kindIndex.has(node.kind) ? kindIndex.get(node.kind) : 0;
-		var anchor = HUES[i % HUES.length];
+		var anchor = kindAnchor(kindIndex.has(node.kind) ? kindIndex.get(node.kind) : 0);
 		var c;
 		if (!node.hash) {
-			c = { h: anchor, s: 60, l: 56 };
+			c = { h: anchor.h, s: 60, l: anchor.l };
 		} else {
+			// The drift stays inside the anchor's band, so a node is always recognisably
+			// of its kind however its hash falls.
 			var seed = hashSeed(node.hash);
 			c = {
-				h: (anchor + ((seed & 0xff) / 255) * 46 - 23 + 360) % 360,
-				s: 50 + (((seed >>> 8) & 0x3f) / 63) * 30,
-				l: 44 + (((seed >>> 16) & 0x3f) / 63) * 24,
+				h: (anchor.h + ((seed & 0xff) / 255) * 30 - 15 + 360) % 360,
+				s: 46 + (((seed >>> 8) & 0x3f) / 63) * 30,
+				l: anchor.l - 9 + (((seed >>> 16) & 0x3f) / 63) * 18,
 			};
 		}
 		colours.set(node.id, c);
@@ -122,7 +143,10 @@
 	paintLegend();
 	function paintLegend() {
 		document.querySelectorAll(".kinds li").forEach(function (li) {
-			li.style.setProperty("--swatch", PALETTE[Number(li.dataset.kind) % PALETTE.length]);
+			// The swatch comes from the same anchor the discs do, so the key cannot
+			// drift out of step with the picture.
+			var a = kindAnchor(Number(li.dataset.kind));
+			li.style.setProperty("--swatch", "hsl(" + a.h + ", 62%, " + a.l + "%)");
 		});
 		document.querySelectorAll(".marks li").forEach(function (li) {
 			li.style.setProperty("--swatch", MARKS[li.dataset.mark] || "#888");
@@ -142,6 +166,7 @@
 		height = canvas.clientHeight;
 		canvas.width = Math.round(width * dpr);
 		canvas.height = Math.round(height * dpr);
+		measurePanels();
 		draw();
 	}
 
@@ -161,11 +186,24 @@
 		fitTo(scene.bounds.x || 0, scene.bounds.y || 0, r, animate);
 	}
 
+	// A viewer who has asked for less motion gets none: every flight across the
+	// graph arrives at once instead of being animated there.
+	var stillness = window.matchMedia("(prefers-reduced-motion: reduce)");
+
 	function animateTo(target) {
+		if (animation) cancelAnimationFrame(animation);
+		if (stillness.matches) {
+			view.x = target.x;
+			view.y = target.y;
+			view.scale = target.scale;
+			animation = null;
+			draw();
+			return;
+		}
+
 		var from = { x: view.x, y: view.y, scale: view.scale };
 		var start = performance.now();
 		var ms = 420;
-		if (animation) cancelAnimationFrame(animation);
 		function step(now) {
 			var t = Math.min(1, (now - start) / ms);
 			var e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -199,6 +237,19 @@
 	// Below this a fill is indistinguishable from the ground it is painted on, and
 	// on a disc that covers the window it is the most expensive thing in the frame.
 	var MIN_FILL_ALPHA = 0.004;
+
+	// The picture is a canvas, which a screen reader has nothing to say about. The
+	// stats panel already spells the numbers out in text; this gives the canvas
+	// itself a description rather than leaving it silent.
+	function describe() {
+		var st = scene.stats || {};
+		canvas.setAttribute("role", "img");
+		canvas.setAttribute(
+			"aria-label",
+			(scene.title || "Merkle graph") + ": " + (st.nodes || 0) + " nodes nested " +
+			((st.maxDepth || 0) + 1) + " deep, with " + (st.links || 0) + " references between them.",
+		);
+	}
 
 	function draw() {
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -577,6 +628,35 @@
 		location.href = url.toString();
 	}
 
+	// The panels sit on top of the canvas and know nothing about what is drawn
+	// under them, so a label wide enough to reach one slides beneath it and becomes
+	// unreadable. Their positions are measured once per layout and labels crossing
+	// that band are kept between them.
+	var topPanels = { bottom: 0, left: 0, right: 0 };
+
+	function measurePanels() {
+		var boxes = [];
+		var top = document.querySelector(".hud-top");
+		var legend = document.querySelector(".hud-legend");
+		if (top) boxes.push(top.getBoundingClientRect());
+		if (legend) boxes.push(legend.getBoundingClientRect());
+		topPanels = { bottom: 0, left: 0, right: width };
+		for (var i = 0; i < boxes.length; i++) {
+			var b = boxes[i];
+			topPanels.bottom = Math.max(topPanels.bottom, b.bottom);
+			// A panel on the left raises the floor; one on the right lowers the ceiling.
+			if (b.left < width / 2) topPanels.left = Math.max(topPanels.left, b.right);
+			else topPanels.right = Math.min(topPanels.right, b.left);
+		}
+	}
+
+	// The width a label may take at this height without running under a panel.
+	function labelRoom(cx, cy, want) {
+		if (cy > topPanels.bottom + 8) return want;
+		var room = 2 * Math.min(cx - topPanels.left, topPanels.right - cx) - 16;
+		return Math.max(0, Math.min(want, room));
+	}
+
 	function drawLabels(visible) {
 		moreMarkers.length = 0;
 		ctx.textAlign = "center";
@@ -609,7 +689,11 @@
 			if (size < 9) continue;
 			ctx.font = fontOf(size);
 			ctx.fillStyle = ink(0.72);
-			wrapInto(label, v.sx, v.sy - v.r + ring / 2, v.r * LABEL_STRIP * 2, size * 1.2, 1);
+			var ly = v.sy - v.r + ring / 2;
+			var room = labelRoom(v.sx, ly, v.r * LABEL_STRIP * 2);
+			// Too little room between the panels to say anything useful.
+			if (room < size * 4) continue;
+			wrapInto(label, v.sx, ly, room, size * 1.2, 1);
 
 			// A capped chain says what it left out, so a truncated history never
 			// passes for a complete one. Where there is a server to ask, the note is
@@ -807,27 +891,63 @@
 		else fitAll(true);
 	}
 
+	// Zoom so that a world point stays under the same place on screen, which is what
+	// makes both the wheel and a pinch feel anchored rather than sprung.
+	function zoomAbout(sx, sy, wx, wy, scale) {
+		if (animation) { cancelAnimationFrame(animation); animation = null; }
+		view.scale = Math.max(1e-4, Math.min(1e9, scale));
+		view.x = wx - (sx - width / 2) / view.scale;
+		view.y = wy - (sy - height / 2) / view.scale;
+		draw();
+	}
+
 	canvas.addEventListener("wheel", function (e) {
 		e.preventDefault();
-		if (animation) { cancelAnimationFrame(animation); animation = null; }
-
-		// Zoom about the cursor: the world point under it must not move.
-		var wx = toWorldX(e.offsetX);
-		var wy = toWorldY(e.offsetY);
 		var factor = Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0016));
-		view.scale = Math.max(1e-4, Math.min(1e9, view.scale * factor));
-		view.x = wx - (e.offsetX - width / 2) / view.scale;
-		view.y = wy - (e.offsetY - height / 2) / view.scale;
-		draw();
+		zoomAbout(e.offsetX, e.offsetY, toWorldX(e.offsetX), toWorldY(e.offsetY), view.scale * factor);
 	}, { passive: false });
+
+	// Touch has no wheel, and the page turns off the browser's own gestures so that
+	// dragging pans, so without this there is no way to zoom on a phone at all.
+	var pointers = new Map();
+	var pinch = null;
+
+	function pinchSpan() {
+		var pts = Array.from(pointers.values());
+		return {
+			x: (pts[0].x + pts[1].x) / 2,
+			y: (pts[0].y + pts[1].y) / 2,
+			dist: Math.max(1, Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)),
+		};
+	}
 
 	canvas.addEventListener("pointerdown", function (e) {
 		canvas.setPointerCapture(e.pointerId);
 		canvas.classList.add("dragging");
+		pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+		if (pointers.size === 2) {
+			// A second finger turns a drag into a pinch, and a pinch is never a click.
+			var span = pinchSpan();
+			pinch = { dist: span.dist, wx: toWorldX(span.x), wy: toWorldY(span.y) };
+			pointer = null;
+			tip.hidden = true;
+			return;
+		}
 		pointer = { x: e.offsetX, y: e.offsetY, moved: false };
 	});
 
 	canvas.addEventListener("pointermove", function (e) {
+		if (pointers.has(e.pointerId)) {
+			pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+		}
+		if (pinch && pointers.size >= 2) {
+			// The world point held between the fingers stays there, so spreading them
+			// zooms in and moving them together pans.
+			var span = pinchSpan();
+			zoomAbout(span.x, span.y, pinch.wx, pinch.wy, view.scale * (span.dist / pinch.dist));
+			pinch.dist = span.dist;
+			return;
+		}
 		if (pointer) {
 			var dx = e.offsetX - pointer.x;
 			var dy = e.offsetY - pointer.y;
@@ -856,7 +976,6 @@
 		if (!pointer) return;
 		var wasClick = !pointer.moved;
 		pointer = null;
-		canvas.classList.remove("dragging");
 		if (!wasClick) return;
 		if (hitMore(e.offsetX, e.offsetY)) {
 			expandChain();
@@ -865,9 +984,27 @@
 		var hit = hitTest(toWorldX(e.offsetX), toWorldY(e.offsetY));
 		if (hit) focus(hit);
 	}
-	canvas.addEventListener("pointerup", endPointer);
-	canvas.addEventListener("pointercancel", function () { pointer = null; canvas.classList.remove("dragging"); });
+	canvas.addEventListener("pointerup", function (e) {
+		var wasPinching = pinch !== null;
+		release(e);
+		if (!wasPinching) endPointer(e);
+	});
+	canvas.addEventListener("pointercancel", release);
 	canvas.addEventListener("pointerleave", function () { tip.hidden = true; });
+
+	function release(e) {
+		pointers.delete(e.pointerId);
+		if (pointers.size < 2) pinch = null;
+		if (pointers.size === 1) {
+			// One finger left of a pinch carries on as a drag, from where it now is.
+			var rest = pointers.values().next().value;
+			pointer = { x: rest.x, y: rest.y, moved: true };
+			return;
+		}
+		if (pointers.size === 0) {
+			canvas.classList.remove("dragging");
+		}
+	}
 
 	// Finding a node.
 	//
@@ -984,6 +1121,36 @@
 		}
 	});
 
+	// Moving through the graph from the keyboard.
+	//
+	// A pointer reaches a node by finding it on screen, which is no use without one
+	// and no help in a graph too large to scan. The arrows walk the containment tree
+	// instead: up to the container, down into what it holds, and along the row.
+	function siblingsOf(node) {
+		return node.parent ? children.get(node.parent) || [] : roots;
+	}
+
+	function stepTo(key) {
+		if (!focused) {
+			// Nothing is chosen yet, so the first arrow takes the outermost node.
+			if (key === "ArrowDown" || key === "ArrowRight") focus(roots[0] || null);
+			return;
+		}
+		if (key === "ArrowUp") {
+			focus(focused.parent ? byId.get(focused.parent) : null);
+			return;
+		}
+		if (key === "ArrowDown") {
+			var kids = children.get(focused.id);
+			if (kids && kids.length) focus(kids[0]);
+			return;
+		}
+		var row = siblingsOf(focused);
+		var at = row.indexOf(focused);
+		if (at < 0 || row.length < 2) return;
+		focus(row[(at + (key === "ArrowRight" ? 1 : -1) + row.length) % row.length]);
+	}
+
 	window.addEventListener("keydown", function (e) {
 		// While the find box is open it owns the keyboard; its own handler deals with
 		// the keys that mean something there.
@@ -994,6 +1161,13 @@
 			return;
 		}
 		switch (e.key) {
+			case "ArrowUp":
+			case "ArrowDown":
+			case "ArrowLeft":
+			case "ArrowRight":
+				e.preventDefault();
+				stepTo(e.key);
+				break;
 			case "Escape":
 			case "Backspace":
 				e.preventDefault();
@@ -1044,6 +1218,7 @@
 		},
 	};
 
+	describe();
 	resize();
 	fitAll(false);
 })();

@@ -233,8 +233,11 @@ body {
 	bottom: 14px;
 	right: 14px;
 	display: flex;
-	gap: 12px;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 6px 12px;
 	color: var(--muted);
+	max-width: min(66ch, calc(100vw - 28px));
 }
 
 kbd {
