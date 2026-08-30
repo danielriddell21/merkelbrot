@@ -77,10 +77,13 @@ can consume it instead.
 ## Demo
 
 ```sh
-merkelbrot serve --source git --repo .        # this repository's own object graph
-merkelbrot serve --source ledger -n 24        # a generated UK payments ledger
-merkelbrot export --source synthetic > x.html
+merkelbrot serve --source git --repo .           # this repository's own object graph
+merkelbrot serve --source ledger -n 24           # a generated UK payments ledger
+merkelbrot serve --source git --separate-chains  # commits side by side, each holding what it added
+merkelbrot export --source git --diff a1b2..c3d4 # what changed between two commits
 ```
+
+Press <kbd>/</kbd> in the viewer to find a node by label, ID or hash.
 
 The sources under [`examples/`](examples) double as reference implementations of
 `graph.Source`: a git object reader (loose objects and packfiles, standard
