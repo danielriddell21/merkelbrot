@@ -605,27 +605,36 @@
 	function hitMore(x, y) {
 		for (var i = 0; i < moreMarkers.length; i++) {
 			var m = moreMarkers[i];
-			if (x >= m.x && x <= m.x + m.w && y >= m.y && y <= m.y + m.h) return true;
+			if (x >= m.x && x <= m.x + m.w && y >= m.y && y <= m.y + m.h) return m.ask;
 		}
-		return false;
+		return null;
 	}
 
-	// How many more links of the chain one request for more history asks for.
+	// How much more one request for more asks for.
 	var CHAIN_STEP = 12;
+	var NODE_STEP = 250;
 
-	// Ask the server for more history. It lays the graph out again and serves it
+	// Ask the server for more of the graph. It builds the scene again and serves it
 	// back, which is why this is a navigation rather than a redraw.
 	//
-	// The limit is raised by a step rather than lifted altogether. Every nested link
+	// Limits are raised by a step rather than lifted altogether. Every nested link
 	// multiplies the scale between the outermost disc and a leaf, so an unbounded
 	// history runs past what a float can represent — a few hundred links reach 10^29
-	// — and arrives as a picture no zoom can resolve. Stepping keeps each answer
-	// one that can actually be drawn.
-	function expandChain() {
-		var current = (scene.stats && scene.stats.chain) || 0;
+	// — and arrives as a picture no zoom can resolve. Stepping keeps each answer one
+	// that can actually be drawn, and keeps the wait proportionate on a large source.
+	function askFor(param, next) {
 		var url = new URL(location.href);
-		url.searchParams.set("chain", String(current + CHAIN_STEP));
+		url.searchParams.set(param, String(next));
 		location.href = url.toString();
+	}
+
+	function expandChain() {
+		askFor("chain", ((scene.stats && scene.stats.chain) || 0) + CHAIN_STEP);
+	}
+
+	function readMore() {
+		var st = scene.stats || {};
+		askFor("nodes", (st.read || st.nodes || 0) + NODE_STEP);
 	}
 
 	// The panels sit on top of the canvas and know nothing about what is drawn
@@ -655,6 +664,25 @@
 		if (cy > topPanels.bottom + 8) return want;
 		var room = 2 * Math.min(cx - topPanels.left, topPanels.right - cx) - 16;
 		return Math.max(0, Math.min(want, room));
+	}
+
+	// A note saying what was left out. Where there is a server to ask, the note is
+	// also the way to ask it: building the scene again is the only way to get the
+	// rest, and only a server can do that.
+	function drawMore(note, cx, cy, size, ask) {
+		ctx.font = fontOf(size);
+		ctx.fillStyle = ink(canExpand ? 0.66 : 0.5);
+		ctx.fillText(note, cx, cy);
+		if (!canExpand) return;
+
+		var w = ctx.measureText(note).width;
+		ctx.beginPath();
+		ctx.moveTo(cx - w / 2, cy + size * 0.35);
+		ctx.lineTo(cx + w / 2, cy + size * 0.35);
+		ctx.lineWidth = 0.8;
+		ctx.strokeStyle = ink(0.35);
+		ctx.stroke();
+		moreMarkers.push({ x: cx - w / 2, y: cy - size, w: w, h: size * 1.8, ask: ask });
 	}
 
 	function drawLabels(visible) {
@@ -702,31 +730,11 @@
 			var noteSize = Math.min(13, size * 0.85);
 			var ny = v.sy + v.r - ring / 2;
 			if (v.node.omitted) {
-				var note = "+" + v.node.omitted + " earlier";
-				ctx.font = fontOf(noteSize);
-				ctx.fillStyle = ink(canExpand ? 0.66 : 0.5);
-				ctx.fillText(note, v.sx, ny);
-				if (!canExpand) continue;
-
-				var nw = ctx.measureText(note).width;
-				ctx.beginPath();
-				ctx.moveTo(v.sx - nw / 2, ny + noteSize * 0.35);
-				ctx.lineTo(v.sx + nw / 2, ny + noteSize * 0.35);
-				ctx.lineWidth = 0.8;
-				ctx.strokeStyle = ink(0.35);
-				ctx.stroke();
-				moreMarkers.push({ x: v.sx - nw / 2, y: ny - noteSize, w: nw, h: noteSize * 1.8 });
-				continue;
-			}
-
-			// A node the source was never read far enough to follow says so too, or
-			// a graph read under a limit passes for one read whole. There is nothing
-			// to click: reading further is a decision for whoever ran the command,
-			// not something the page can ask for.
-			if (v.node.unread) {
-				ctx.font = fontOf(noteSize);
-				ctx.fillStyle = ink(0.45);
-				ctx.fillText("+" + v.node.unread + " unread", v.sx, ny);
+				drawMore("+" + v.node.omitted + " earlier", v.sx, ny, noteSize, expandChain);
+			} else if (v.node.unread) {
+				// A node the source was never read far enough to follow says so too, or
+				// a graph read under a limit passes for one read whole.
+				drawMore("+" + v.node.unread + " unread", v.sx, ny, noteSize, readMore);
 			}
 		}
 	}
@@ -977,8 +985,9 @@
 		var wasClick = !pointer.moved;
 		pointer = null;
 		if (!wasClick) return;
-		if (hitMore(e.offsetX, e.offsetY)) {
-			expandChain();
+		var ask = hitMore(e.offsetX, e.offsetY);
+		if (ask) {
+			ask();
 			return;
 		}
 		var hit = hitTest(toWorldX(e.offsetX), toWorldY(e.offsetY));

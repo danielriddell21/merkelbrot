@@ -36,7 +36,7 @@ anything that would rather read the data than the picture.`,
 
 			// A served page can ask for the history the chain limit left out, which
 			// an exported one has nobody to ask for.
-			handler := (&web.Server{Scene: s, Expand: opts.buildWith}).Handler()
+			handler := (&web.Server{Scene: s, Expand: opts.expand}).Handler()
 			srv := &http.Server{
 				Handler:           handler,
 				ReadHeaderTimeout: 5 * time.Second,

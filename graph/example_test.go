@@ -145,3 +145,32 @@ func ExampleNewLimited() {
 	// continues below c1 (commit)
 	// continues below t2 (tree)
 }
+
+// ExampleGraph_Grow widens a bounded read without paying for it twice. The first
+// read stops early; growing it carries on from the frontier, and the source is
+// never asked for a node it has already supplied.
+func ExampleGraph_Grow() {
+	src := graph.NewMemorySource([]string{"commit"},
+		graph.Node[string]{ID: "commit", Kind: "commit", Children: []string{"tree"}},
+		graph.Node[string]{ID: "tree", Kind: "tree", Children: []string{"readme", "licence"}},
+		graph.Node[string]{ID: "readme", Kind: "blob"},
+		graph.Node[string]{ID: "licence", Kind: "blob"},
+	)
+
+	part, err := graph.NewLimited(src, graph.Limit{MaxNodes: 2})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("read:", part.Len(), "truncated:", part.Truncated())
+
+	whole, err := part.Grow(src, graph.Limit{})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("grown:", whole.Len(), "truncated:", whole.Truncated())
+	fmt.Println("the first graph is untouched:", part.Len())
+	// Output:
+	// read: 2 truncated: true
+	// grown: 4 truncated: false
+	// the first graph is untouched: 2
+}

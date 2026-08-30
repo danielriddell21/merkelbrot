@@ -126,6 +126,10 @@ type Stats struct {
 	Chain int `json:"chain,omitempty"`
 	// Unread counts references the source was never read far enough to follow.
 	Unread int `json:"unread,omitempty"`
+	// Read is the limit the source was read under, zero for none. The layout is
+	// handed a graph and cannot tell how much of one it is, so a caller that
+	// imposed a limit fills this in; a viewer offering to read further needs it.
+	Read int `json:"read,omitempty"`
 }
 
 // Scene is a flat, serialisable description of a laid-out graph.

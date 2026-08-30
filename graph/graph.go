@@ -43,6 +43,12 @@ on that: it reads breadth-first, so what it keeps is the graph nearest its roots
 and it trims the references it never followed so that the result is a smaller
 graph rather than a broken one. [Graph.Frontier] reports where it stopped.
 
+[Graph.Grow] carries such a read further. It resumes from the frontier rather
+than starting again, so widening the window costs only what the extra nodes cost,
+and it returns a new graph rather than changing the one it was given — the
+smaller graph stays valid and can go on being drawn while the larger one is
+built.
+
 # Traversal
 
 Traversals are returned as iterators from the standard iter package, so they
@@ -70,6 +76,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"maps"
 	"math"
 	"slices"
 )
@@ -152,8 +159,12 @@ type Graph[K comparable] struct {
 	order    []K
 	roots    []K
 	frontier []K
-	unread   map[K]int
-	tree     bool
+	// pending keeps the complete child list of every node on the frontier, so that
+	// [Graph.Grow] can carry on from exactly where the read stopped. Keeping the
+	// whole list rather than the part that was dropped preserves the order a source
+	// declared its children in, which callers rely on.
+	pending map[K][]K
+	tree    bool
 }
 
 // New materialises every node reachable from the source's roots.
@@ -215,13 +226,22 @@ func NewLimited[K comparable](src Source[K], limit Limit) (*Graph[K], error) {
 			}
 		}
 	}
+	if err := g.finish(); err != nil {
+		return nil, err
+	}
+	return g, nil
+}
+
+// finish normalises the indexes a walk leaves behind and checks the result is the
+// acyclic graph the rest of the library assumes.
+func (g *Graph[K]) finish() error {
 	// Children are popped in reverse push order, so parent lists are normalised
 	// against the deterministic discovery order once loading has finished.
 	for _, list := range g.parents {
 		slices.SortStableFunc(list, func(a, b K) int { return g.pos[a] - g.pos[b] })
 	}
 	if err := g.checkAcyclic(); err != nil {
-		return nil, err
+		return err
 	}
 	g.tree = true
 	for _, id := range g.order {
@@ -230,7 +250,64 @@ func NewLimited[K comparable](src Source[K], limit Limit) (*Graph[K], error) {
 			break
 		}
 	}
-	return g, nil
+	return nil
+}
+
+// Grow carries a limited read further into its source without reading any of it
+// again.
+//
+// A graph read under a [Limit] stops at a frontier, and widening the window would
+// otherwise mean resolving every node a second time. Grow resumes the walk from
+// that frontier instead: everything already read is carried over, and the source
+// is asked only for nodes it has not supplied before.
+//
+// The receiver is untouched. A graph is a snapshot, so growing one returns
+// another, and the original stays valid — a renderer can keep drawing it while the
+// larger one is built. Growing a graph that was read whole, or passing a limit no
+// larger than the graph already is, returns the receiver unchanged.
+func (g *Graph[K]) Grow(src Source[K], limit Limit) (*Graph[K], error) {
+	if len(g.frontier) == 0 || (limit.MaxNodes > 0 && limit.MaxNodes <= len(g.order)) {
+		return g, nil
+	}
+
+	grown := &Graph[K]{
+		nodes:   make(map[K]Node[K], len(g.nodes)),
+		parents: make(map[K][]K, len(g.nodes)),
+		pos:     maps.Clone(g.pos),
+		order:   slices.Clone(g.order),
+		roots:   slices.Clone(g.roots),
+	}
+	for id, n := range g.nodes {
+		// The frontier's children were trimmed to what had been read; the walk needs
+		// the whole list back to know where to carry on.
+		if full, ok := g.pending[id]; ok {
+			n.Children = full
+		}
+		grown.nodes[id] = n
+	}
+
+	// Nodes already read are recognised and skipped, so this scan costs a pass over
+	// the edges and nothing at the source.
+	max := limit.MaxNodes
+	if max <= 0 {
+		max = math.MaxInt
+	}
+	for i := 0; i < len(grown.order) && len(grown.order) < max; i++ {
+		for _, child := range grown.nodes[grown.order[i]].Children {
+			if len(grown.order) >= max {
+				break
+			}
+			if err := grown.resolve(src, child); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	grown.trim()
+	if err := grown.finish(); err != nil {
+		return nil, err
+	}
+	return grown, nil
 }
 
 func (g *Graph[K]) load(src Source[K], id K) error {
@@ -311,11 +388,11 @@ func (g *Graph[K]) trim() {
 			}
 		}
 		if len(kept) != len(n.Children) {
-			if g.unread == nil {
-				g.unread = make(map[K]int)
+			if g.pending == nil {
+				g.pending = make(map[K][]K)
 			}
 			g.frontier = append(g.frontier, id)
-			g.unread[id] = len(n.Children) - len(kept)
+			g.pending[id] = n.Children
 			n.Children = kept
 			g.nodes[id] = n
 		}
@@ -382,7 +459,13 @@ func (g *Graph[K]) Truncated() bool { return len(g.frontier) > 0 }
 // It counts references, not everything behind them: each one may lead to a
 // subtree of any size, so this is the least that is missing rather than all of
 // it.
-func (g *Graph[K]) Unread(id K) int { return g.unread[id] }
+func (g *Graph[K]) Unread(id K) int {
+	full, ok := g.pending[id]
+	if !ok {
+		return 0
+	}
+	return len(full) - len(g.nodes[id].Children)
+}
 
 // Len reports the number of nodes in the graph.
 func (g *Graph[K]) Len() int { return len(g.order) }

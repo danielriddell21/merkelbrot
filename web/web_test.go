@@ -158,8 +158,14 @@ func growable(t *testing.T) *web.Server {
 		}))
 	}
 	return &web.Server{
-		Scene:  pack(3),
-		Expand: func(maxChain int) (*scene.Scene, error) { return pack(maxChain), nil },
+		Scene: pack(3),
+		Expand: func(ask web.Ask) (*scene.Scene, error) {
+			chain := 3
+			if ask.Chain != nil {
+				chain = *ask.Chain
+			}
+			return pack(chain), nil
+		},
 	}
 }
 
@@ -232,6 +238,8 @@ func TestExpandIsRefusedWithoutAWayToDoIt(t *testing.T) {
 		{"/?chain=0", http.StatusNotImplemented},
 		{"/scene.json?chain=nonsense", http.StatusBadRequest},
 		{"/scene.json?chain=-1", http.StatusBadRequest},
+		{"/scene.json?nodes=0", http.StatusNotImplemented},
+		{"/scene.json?nodes=nonsense", http.StatusBadRequest},
 	} {
 		resp, err := srv.Client().Get(srv.URL + tc.path)
 		if err != nil {

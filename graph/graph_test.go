@@ -334,3 +334,126 @@ func TestNoLimitReadsEverything(t *testing.T) {
 		t.Error("Truncated reports true on a graph read whole")
 	}
 }
+
+// countingSource records how many times each node was asked for, which is what
+// growing a graph is supposed to avoid repeating.
+type countingSource struct {
+	inner graph.Source[string]
+	calls map[string]int
+}
+
+func counted(src graph.Source[string]) *countingSource {
+	return &countingSource{inner: src, calls: map[string]int{}}
+}
+
+func (c *countingSource) Roots() iter.Seq[string] { return c.inner.Roots() }
+
+func (c *countingSource) Node(id string) (graph.Node[string], bool) {
+	c.calls[id]++
+	return c.inner.Node(id)
+}
+
+func (c *countingSource) repeated() []string {
+	var again []string
+	for id, n := range c.calls {
+		if n > 1 {
+			again = append(again, id)
+		}
+	}
+	slices.Sort(again)
+	return again
+}
+
+func TestGrowReadsFurtherWithoutReadingAgain(t *testing.T) {
+	src := counted(wide(t))
+	small, err := graph.NewLimited(src, graph.Limit{MaxNodes: 8})
+	if err != nil {
+		t.Fatalf("NewLimited: %v", err)
+	}
+
+	big, err := small.Grow(src, graph.Limit{MaxNodes: 20})
+	if err != nil {
+		t.Fatalf("Grow: %v", err)
+	}
+	if big.Len() <= small.Len() {
+		t.Errorf("grew to %d nodes from %d, want more", big.Len(), small.Len())
+	}
+	if big.Len() > 20 {
+		t.Errorf("grew to %d nodes, want at most 20", big.Len())
+	}
+	if again := src.repeated(); len(again) > 0 {
+		t.Errorf("the source was asked again for %v, want every node read once", again)
+	}
+	// The smaller graph is a snapshot and goes on working.
+	if small.Len() != 8 {
+		t.Errorf("the original graph changed to %d nodes, want it left alone", small.Len())
+	}
+}
+
+func TestGrowKeepsTheGraphConsistent(t *testing.T) {
+	src := wide(t)
+	g, err := graph.NewLimited(src, graph.Limit{MaxNodes: 5})
+	if err != nil {
+		t.Fatalf("NewLimited: %v", err)
+	}
+	for _, to := range []int{9, 14, 0} {
+		if g, err = g.Grow(src, graph.Limit{MaxNodes: to}); err != nil {
+			t.Fatalf("Grow to %d: %v", to, err)
+		}
+		for id, n := range g.All() {
+			for _, child := range n.Children {
+				if _, ok := g.Node(child); !ok {
+					t.Fatalf("after growing to %d, %v references %v, which was never read", to, id, child)
+				}
+			}
+		}
+	}
+	if g.Truncated() {
+		t.Error("growing without a limit left the graph truncated")
+	}
+	if got, want := g.Len(), 43; got != want {
+		t.Errorf("grew to %d nodes, want the whole graph (%d)", got, want)
+	}
+}
+
+// TestGrowKeepsChildOrder matters because the layout reads the first child of a
+// node as the line a merge continues: a grown graph that reordered children would
+// quietly redraw the history.
+func TestGrowKeepsChildOrder(t *testing.T) {
+	src := graph.NewMemorySource([]string{"root"},
+		graph.Node[string]{ID: "root", Children: []string{"a", "b", "c", "d"}},
+		graph.Node[string]{ID: "a"}, graph.Node[string]{ID: "b"},
+		graph.Node[string]{ID: "c"}, graph.Node[string]{ID: "d"},
+	)
+	small, err := graph.NewLimited(src, graph.Limit{MaxNodes: 3})
+	if err != nil {
+		t.Fatalf("NewLimited: %v", err)
+	}
+	big, err := small.Grow(src, graph.Limit{})
+	if err != nil {
+		t.Fatalf("Grow: %v", err)
+	}
+	n, _ := big.Node("root")
+	if got, want := n.Children, []string{"a", "b", "c", "d"}; !slices.Equal(got, want) {
+		t.Errorf("children after growing = %v, want %v", got, want)
+	}
+}
+
+func TestGrowIsANoOpWhenThereIsNothingMore(t *testing.T) {
+	src := wide(t)
+	whole, err := graph.New(src)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if got, err := whole.Grow(src, graph.Limit{}); err != nil || got != whole {
+		t.Errorf("Grow on a complete graph = %p, %v, want the receiver unchanged", got, err)
+	}
+
+	part, err := graph.NewLimited(src, graph.Limit{MaxNodes: 6})
+	if err != nil {
+		t.Fatalf("NewLimited: %v", err)
+	}
+	if got, err := part.Grow(src, graph.Limit{MaxNodes: 4}); err != nil || got != part {
+		t.Errorf("Grow to a smaller limit = %p, %v, want the receiver unchanged", got, err)
+	}
+}

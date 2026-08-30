@@ -13,6 +13,7 @@ import (
 	"github.com/danielriddell21/merkelbrot/layout"
 	"github.com/danielriddell21/merkelbrot/proof"
 	"github.com/danielriddell21/merkelbrot/scene"
+	"github.com/danielriddell21/merkelbrot/web"
 )
 
 // options holds the flags shared by every command that reads a graph.
@@ -52,6 +53,10 @@ func (o *options) build() (*scene.Scene, error) {
 		MaxChain:       o.maxChain,
 		SeparateChains: o.separate,
 	}))
+
+	// The limit the source was read under is the caller's to report: the layout is
+	// given a graph and cannot know how much of one it is.
+	s.Stats.Read = o.maxNodes
 
 	if o.prove != "" {
 		marks, err := o.inclusion(g, b)
@@ -160,14 +165,18 @@ func resolve(g *graph.Graph[string], ref string) (string, error) {
 	}
 }
 
-// buildWith reads the selected source and lays it out with the given limit on how
-// many links of a chain are nested, which is what a served page asks for when it
-// wants history the limit left out.
-func (o *options) buildWith(maxChain int) (*scene.Scene, error) {
-	// The options are copied so that answering one request for more history does
-	// not change what every later request gets.
+// expand builds the scene again under the limits a served page asked for, which
+// is how it reaches history or objects the original limits left out.
+func (o *options) expand(ask web.Ask) (*scene.Scene, error) {
+	// The options are copied so that answering one request does not change what
+	// every later request gets.
 	with := *o
-	with.maxChain = maxChain
+	if ask.Chain != nil {
+		with.maxChain = *ask.Chain
+	}
+	if ask.Nodes != nil {
+		with.maxNodes = *ask.Nodes
+	}
 	return with.build()
 }
 

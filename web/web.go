@@ -49,6 +49,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/danielriddell21/merkelbrot/scene"
@@ -87,18 +88,31 @@ func Render(ctx context.Context, w io.Writer, s *scene.Scene) error {
 	return nil
 }
 
+// Ask is a request for more of a graph than the page was first given.
+//
+// A nil field is one the page did not ask about, and is left as the server had
+// it. A field set to zero asks for that limit to be lifted altogether.
+type Ask struct {
+	// Chain is a new limit on how many links of a chain are laid out, which is what
+	// a page asks for when a history was cut short by
+	// [github.com/danielriddell21/merkelbrot/layout.Options.MaxChain].
+	Chain *int
+	// Nodes is a new limit on how much of the source is read, which is what a page
+	// asks for when the read stopped at a frontier under a
+	// [github.com/danielriddell21/merkelbrot/graph.Limit].
+	Nodes *int
+}
+
 // Server serves the viewer over HTTP.
 type Server struct {
 	// Scene is served when no other is asked for.
 	Scene *scene.Scene
-	// Expand, when set, lays the graph out again with a different limit on how many
-	// links of a chain are nested, and is what lets a page ask for history that
-	// [github.com/danielriddell21/merkelbrot/layout.Options.MaxChain] left out. It
-	// is called with the requested limit, zero meaning no limit at all.
+	// Expand, when set, builds the scene again under new limits, and is what lets a
+	// page ask for the parts of the graph its own limits left out.
 	//
 	// Left nil, a request for more is refused and the page says so. An exported
 	// page has no server to ask, so it always says so.
-	Expand func(maxChain int) (*scene.Scene, error)
+	Expand func(Ask) (*scene.Scene, error)
 }
 
 // Handler serves the viewer for a scene.
@@ -111,9 +125,9 @@ func Handler(s *scene.Scene) http.Handler {
 
 // Handler returns the HTTP handler for the server.
 //
-// Both GET / and GET /scene.json accept a chain query parameter asking for the
-// graph laid out again with that limit on nested chain links, zero meaning no
-// limit. Without [Server.Expand] set, such a request is refused with 501.
+// Both GET / and GET /scene.json accept chain and nodes query parameters asking
+// for the scene to be built again under those limits, zero meaning no limit.
+// Without [Server.Expand] set, such a request is refused with 501.
 func (srv *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
@@ -155,20 +169,37 @@ func statusFor(err error) int {
 }
 
 func (srv *Server) sceneFor(r *http.Request) (*scene.Scene, error) {
-	raw := r.URL.Query().Get("chain")
-	if raw == "" {
-		return srv.Scene, nil
+	q := r.URL.Query()
+	chain, err := limitParam(q, "chain")
+	if err != nil {
+		return nil, err
 	}
-	chain, err := strconv.Atoi(raw)
-	if err != nil || chain < 0 {
-		return nil, fmt.Errorf("web: chain must be a number of links, zero for no limit: %q", raw)
+	nodes, err := limitParam(q, "nodes")
+	if err != nil {
+		return nil, err
+	}
+	if chain == nil && nodes == nil {
+		return srv.Scene, nil
 	}
 	if srv.Expand == nil {
 		return nil, errNoExpand
 	}
-	s, err := srv.Expand(chain)
+	s, err := srv.Expand(Ask{Chain: chain, Nodes: nodes})
 	if err != nil {
-		return nil, fmt.Errorf("web: laying the graph out again: %w", err)
+		return nil, fmt.Errorf("web: building the scene again: %w", err)
 	}
 	return s, nil
+}
+
+// limitParam reads one limit from the query, absent meaning the page did not ask.
+func limitParam(q url.Values, name string) (*int, error) {
+	raw := q.Get(name)
+	if raw == "" {
+		return nil, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return nil, fmt.Errorf("web: %s must be a count, zero for no limit: %q", name, raw)
+	}
+	return &n, nil
 }
