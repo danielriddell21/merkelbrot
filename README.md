@@ -81,6 +81,7 @@ merkelbrot serve --source git --repo .           # this repository's own object 
 merkelbrot serve --source ledger -n 24           # a generated UK payments ledger
 merkelbrot serve --source git --separate-chains  # commits side by side, each holding what it added
 merkelbrot export --source git --diff a1b2..c3d4 # what changed between two commits
+merkelbrot serve --source git --verify           # flag any object that no longer hashes to its name
 ```
 
 Press <kbd>/</kbd> in the viewer to find a node by label, ID or hash.

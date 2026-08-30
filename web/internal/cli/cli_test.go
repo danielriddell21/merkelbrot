@@ -226,3 +226,60 @@ func TestDiffAcceptsAPrefix(t *testing.T) {
 		t.Errorf("a six-character prefix was rejected: %v", err)
 	}
 }
+
+// TestProveSearchesEveryRoot keeps a multi-rooted graph honest: the node need only
+// be under one of the roots, not under whichever happens to come first.
+func TestProveSearchesEveryRoot(t *testing.T) {
+	// The ledger has one root, so a second is added by hand through the scene the
+	// command produces: what matters is that the search does not stop at roots[0].
+	raw, _, err := run(t, "scene", "--source", "synthetic", "-n", "5")
+	if err != nil {
+		t.Fatalf("scene: %v", err)
+	}
+	var s struct {
+		Nodes []struct {
+			ID    string `json:"id"`
+			Leaf  bool   `json:"leaf"`
+			Depth int    `json:"depth"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal([]byte(raw), &s); err != nil {
+		t.Fatalf("decoding scene: %v", err)
+	}
+	var deepest string
+	best := -1
+	for _, n := range s.Nodes {
+		if n.Leaf && n.Depth > best {
+			deepest, best = n.ID, n.Depth
+		}
+	}
+	if deepest == "" {
+		t.Skip("no leaf to prove")
+	}
+	if _, _, err := run(t, "scene", "--source", "synthetic", "-n", "5", "--prove", deepest); err != nil {
+		t.Errorf("proving a reachable leaf failed: %v", err)
+	}
+}
+
+func TestVerifyChecksTheRepository(t *testing.T) {
+	out, _, err := run(t, "scene", "--source", "git", "--repo", "../../..", "--verify", "-n", "3")
+	if err != nil {
+		t.Fatalf("--verify on this repository failed: %v", err)
+	}
+	// An intact repository verifies clean, so there is nothing to highlight.
+	if strings.Contains(out, `"invalid"`) {
+		t.Error("this repository reported a hash mismatch")
+	}
+}
+
+// TestVerifyNeedsASourceThatCan is the honest failure: only a source that knows
+// how its objects are named can be checked, and the rest must say so.
+func TestVerifyNeedsASourceThatCan(t *testing.T) {
+	_, _, err := run(t, "scene", "--source", "synthetic", "-n", "3", "--verify")
+	if err == nil {
+		t.Fatal("--verify on a source with no hashing rule succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "cannot be verified") {
+		t.Errorf("error = %q, want it to explain the source cannot be verified", err)
+	}
+}

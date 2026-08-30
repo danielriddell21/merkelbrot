@@ -35,6 +35,8 @@ package gitrepo
 import (
 	"bytes"
 	"compress/zlib"
+	//nolint:gosec // Git names its objects by SHA-1; reproducing that is the point.
+	"crypto/sha1"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -47,6 +49,7 @@ import (
 	"time"
 
 	"github.com/danielriddell21/merkelbrot/graph"
+	"github.com/danielriddell21/merkelbrot/proof"
 )
 
 // ErrNotARepository reports that no git directory was found.
@@ -439,6 +442,30 @@ func parseTree(data []byte) ([]treeEntry, error) {
 		data = data[zero+21:]
 	}
 	return entries, nil
+}
+
+// Hasher reports how a git object's name is derived from its contents, so that
+// [github.com/danielriddell21/merkelbrot/proof.Verify] can check the repository
+// the way git fsck does.
+//
+// Git names an object by the SHA-1 of its type, its length and its bytes, so this
+// re-reads each object and recomputes that name. It does not fold in the hashes
+// of the children it is given: a tree's own bytes already carry the names of
+// everything it points at, so damage to a child is caught when that child is
+// checked rather than by the parent disagreeing. The result is that a failure
+// names the object that is actually broken.
+func (s *Source) Hasher() proof.Hasher[string] {
+	return func(n graph.Node[string], _ [][]byte) ([]byte, error) {
+		typ, body, err := s.object(n.ID)
+		if err != nil {
+			return nil, err
+		}
+		sum := sha1.New()
+		fmt.Fprintf(sum, "%s %d", typ, len(body))
+		sum.Write([]byte{0})
+		sum.Write(body)
+		return sum.Sum(nil), nil
+	}
 }
 
 func (s *Source) has(sha string) bool {

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -24,6 +25,7 @@ type options struct {
 	maxNodes int
 	prove    string
 	diff     string
+	verify   bool
 	addr     string
 	separate bool
 	maxChain int
@@ -38,10 +40,6 @@ func (o *options) build() (*scene.Scene, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Nesting is the default: separating a history leaves most objects shared
-	// between the links rather than owned by any one of them, so dominance has
-	// almost nothing left to express and the picture flattens out.
-
 	g, err := graph.NewLimited(src, graph.Limit{MaxNodes: o.maxNodes})
 	if err != nil {
 		return nil, fmt.Errorf("loading %s: %w", o.source, err)
@@ -56,38 +54,83 @@ func (o *options) build() (*scene.Scene, error) {
 	}))
 
 	if o.prove != "" {
-		id, err := resolve(g, o.prove)
+		marks, err := o.inclusion(g, b)
 		if err != nil {
 			return nil, err
 		}
-		roots := slices.Collect(g.Roots())
-		path, ok := proof.Inclusion(g, id, roots[0])
-		if !ok {
-			return nil, fmt.Errorf("no inclusion path from %s to %s", id, roots[0])
-		}
-		s.Add(b.Inclusion(path)...)
+		s.Add(marks...)
 	}
-
 	if o.diff != "" {
-		before, after, ok := strings.Cut(o.diff, "..")
-		if !ok || before == "" || after == "" {
-			return nil, fmt.Errorf(`--diff wants two node IDs separated by "..", got %q`, o.diff)
-		}
-		oldID, err := resolve(g, before)
+		marks, err := o.consistency(g, b)
 		if err != nil {
 			return nil, err
 		}
-		newID, err := resolve(g, after)
+		s.Add(marks...)
+	}
+	if o.verify {
+		marks, err := verify(src, g, b)
 		if err != nil {
 			return nil, err
 		}
-		d, ok := proof.Consistency(g, oldID, newID)
-		if !ok {
-			return nil, fmt.Errorf("cannot compare %s with %s", oldID, newID)
-		}
-		s.Add(b.Consistency(d)...)
+		s.Add(marks...)
 	}
 	return s, nil
+}
+
+// verifiable is a source that knows how its own objects are named, which is the
+// one thing [proof.Verify] cannot work out for itself.
+type verifiable interface {
+	Hasher() proof.Hasher[string]
+}
+
+// verify recomputes every node's hash and highlights those that disagree.
+func verify(src graph.Source[string], g *graph.Graph[string], b scene.Builder[string]) ([]scene.Highlight, error) {
+	v, ok := src.(verifiable)
+	if !ok {
+		return nil, errors.New("this source cannot be verified: only a source that knows how its objects are named can be")
+	}
+	bad, err := proof.Verify(g, v.Hasher())
+	if err != nil {
+		return nil, fmt.Errorf("verifying: %w", err)
+	}
+	return b.Invalid(bad), nil
+}
+
+// inclusion highlights the path proving the named node belongs to the graph.
+func (o *options) inclusion(g *graph.Graph[string], b scene.Builder[string]) ([]scene.Highlight, error) {
+	id, err := resolve(g, o.prove)
+	if err != nil {
+		return nil, err
+	}
+	// A graph may have several roots, and the node need only be under one of them.
+	roots := slices.Collect(g.Roots())
+	for _, root := range roots {
+		if path, ok := proof.Inclusion(g, id, root); ok {
+			return b.Inclusion(path), nil
+		}
+	}
+	return nil, fmt.Errorf("no inclusion path from %s to any of %v", id, roots)
+}
+
+// consistency highlights what is shared, added and removed between two nodes.
+func (o *options) consistency(g *graph.Graph[string], b scene.Builder[string]) ([]scene.Highlight, error) {
+	before, after, ok := strings.Cut(o.diff, "..")
+	if !ok || before == "" || after == "" {
+		return nil, fmt.Errorf(`--diff wants two node IDs separated by "..", got %q`, o.diff)
+	}
+	oldID, err := resolve(g, before)
+	if err != nil {
+		return nil, err
+	}
+	newID, err := resolve(g, after)
+	if err != nil {
+		return nil, err
+	}
+	d, ok := proof.Consistency(g, oldID, newID)
+	if !ok {
+		return nil, fmt.Errorf("cannot compare %s with %s", oldID, newID)
+	}
+	return b.Consistency(d), nil
 }
 
 // resolve turns a node reference into an ID, accepting any unique prefix.

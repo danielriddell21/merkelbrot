@@ -15,6 +15,7 @@ import (
 	"github.com/danielriddell21/merkelbrot/examples/gitrepo"
 	"github.com/danielriddell21/merkelbrot/graph"
 	"github.com/danielriddell21/merkelbrot/layout"
+	"github.com/danielriddell21/merkelbrot/proof"
 )
 
 // repoBuilder writes loose git objects by hand, so these tests exercise the
@@ -363,5 +364,73 @@ func TestPartialCloneSkipsFilteredEntries(t *testing.T) {
 	n, _ := g.Node(tree)
 	if got, want := len(n.Children), 1; got != want {
 		t.Errorf("tree has %d entries, want %d", got, want)
+	}
+}
+
+// corrupt rewrites an object's file with different content while leaving it filed
+// under its original name, which is exactly what verification exists to notice.
+func corrupt(t *testing.T, gitDir, sha string, body []byte) {
+	t.Helper()
+	raw := append([]byte(fmt.Sprintf("blob %d\x00", len(body))), body...)
+	var buf bytes.Buffer
+	zw := zlib.NewWriter(&buf)
+	if _, err := zw.Write(raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(gitDir, "objects", sha[:2], sha[2:])
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHasherReproducesEveryObjectName(t *testing.T) {
+	dir, _, _ := sample(t)
+	src, err := gitrepo.Open(dir, gitrepo.Config{})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	g, err := graph.New(src)
+	if err != nil {
+		t.Fatalf("graph.New: %v", err)
+	}
+
+	bad, err := proof.Verify(g, src.Hasher())
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if len(bad) != 0 {
+		t.Errorf("Verify reported %v, want an intact repository to verify clean", bad)
+	}
+}
+
+// TestVerifyCatchesATamperedObject is the property the whole exercise rests on: an
+// object edited in place no longer hashes to the name it is filed under.
+func TestVerifyCatchesATamperedObject(t *testing.T) {
+	dir, _, shared := sample(t)
+	corrupt(t, filepath.Join(dir, ".git"), shared, []byte("not what this object is named after"))
+
+	src, err := gitrepo.Open(dir, gitrepo.Config{})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	g, err := graph.New(src)
+	if err != nil {
+		t.Fatalf("graph.New: %v", err)
+	}
+
+	bad, err := proof.Verify(g, src.Hasher())
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if !slices.Contains(bad, shared) {
+		t.Errorf("Verify reported %v, want it to name the tampered object %s", bad, shared)
+	}
+	// Only the object that was edited is named: a git object's hash covers its own
+	// bytes, so the tree pointing at it is still intact.
+	if len(bad) != 1 {
+		t.Errorf("Verify reported %d failures, want only the one that was changed", len(bad))
 	}
 }

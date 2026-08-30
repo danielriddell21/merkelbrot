@@ -43,6 +43,8 @@ Merkle DAG) or read from a real git repository's object store.`,
 	root.PersistentFlags().StringVar(&opts.prove, "prove", "", "highlight the inclusion path for this node ID")
 	root.PersistentFlags().StringVar(&opts.diff, "diff", "",
 		"highlight what changed between two nodes, as old..new")
+	root.PersistentFlags().BoolVar(&opts.verify, "verify", false,
+		"recompute every hash and highlight anything that disagrees")
 	root.PersistentFlags().BoolVar(&opts.separate, "separate-chains", false,
 		"lay a history out side by side instead of nesting it as concentric rings")
 	root.PersistentFlags().IntVar(&opts.maxChain, "max-chain", 12,
