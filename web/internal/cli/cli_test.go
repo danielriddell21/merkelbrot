@@ -2,9 +2,13 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/danielriddell21/merkelbrot/scene"
 )
@@ -281,5 +285,65 @@ func TestVerifyNeedsASourceThatCan(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "cannot be verified") {
 		t.Errorf("error = %q, want it to explain the source cannot be verified", err)
+	}
+}
+
+// TestServeAnswersAndStopsOnCancel covers the serving path end to end: the command
+// binds, answers, and — because Serve does not watch the context itself — comes
+// back when the context is cancelled rather than having to be killed.
+func TestServeAnswersAndStopsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	root := newRoot("test")
+	root.SetArgs([]string{"serve", "--source", "ledger", "-n", "3", "--addr", "127.0.0.1:0"})
+	var out, errOut bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&errOut)
+
+	done := make(chan error, 1)
+	go func() { done <- root.ExecuteContext(ctx) }()
+
+	// The address chosen is reported on stderr, which is the only way to learn it
+	// when port 0 was asked for.
+	var addr string
+	for range 100 {
+		if m := regexp.MustCompile(`http://([^\s]+)`).FindStringSubmatch(errOut.String()); m != nil {
+			addr = m[1]
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if addr == "" {
+		t.Fatalf("the server never reported an address: %q", errOut.String())
+	}
+
+	resp, err := http.Get("http://" + addr + "/scene.json")
+	if err != nil {
+		t.Fatalf("GET /scene.json: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("serve returned %v, want a clean shutdown", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("serve did not return after its context was cancelled")
+	}
+}
+
+func TestServeRejectsAnUnusableAddress(t *testing.T) {
+	_, _, err := run(t, "serve", "--source", "ledger", "-n", "2", "--addr", "256.256.256.256:1")
+	if err == nil {
+		t.Fatal("serving on an impossible address succeeded, want an error")
+	}
+	if !strings.Contains(err.Error(), "listening") {
+		t.Errorf("error = %q, want it to mention listening", err)
 	}
 }

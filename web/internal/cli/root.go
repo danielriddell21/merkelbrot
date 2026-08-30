@@ -2,14 +2,25 @@
 package cli
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
 )
 
 // Execute runs the command tree, reporting any error to the caller.
+//
+// The context is cancelled on interrupt, which is what gives a long-running
+// command — serving, above all — the chance to stop cleanly rather than being
+// killed part-way through a response.
 func Execute(version string) error {
-	if err := newRoot(version).Execute(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := newRoot(version).ExecuteContext(ctx); err != nil {
 		return fmt.Errorf("execute: %w", err)
 	}
 	return nil

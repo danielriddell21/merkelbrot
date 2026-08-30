@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -34,13 +35,25 @@ anything that would rather read the data than the picture.`,
 			}
 			fmt.Fprintf(cmd.ErrOrStderr(), "merkelbrot: %d nodes on http://%s\n", s.Stats.Nodes, listener.Addr())
 
-			// A served page can ask for the history the chain limit left out, which
-			// an exported one has nobody to ask for.
+			// A served page can ask for the parts of the graph its limits left out,
+			// which an exported one has nobody to ask for.
 			handler := (&web.Server{Scene: s, Expand: opts.expand}).Handler()
 			srv := &http.Server{
 				Handler:           handler,
 				ReadHeaderTimeout: 5 * time.Second,
 			}
+
+			// Serve does not watch the context, so an interrupt is turned into a
+			// shutdown here: requests in flight get a moment to finish instead of
+			// being cut off.
+			ctx := cmd.Context()
+			go func() {
+				<-ctx.Done()
+				grace, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				defer cancel()
+				_ = srv.Shutdown(grace)
+			}()
+
 			if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				return fmt.Errorf("serving: %w", err)
 			}
