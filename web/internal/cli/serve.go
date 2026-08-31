@@ -23,7 +23,13 @@ GET / returns the page and GET /scene.json returns the scene as JSON, for
 anything that would rather read the data than the picture.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, err := opts.build()
+			// The graph is kept for the life of the server, so a page asking to see
+			// more of it never makes the source be read from the beginning again.
+			gr, err := newGrower(opts)
+			if err != nil {
+				return err
+			}
+			s, err := gr.scene(web.Ask{})
 			if err != nil {
 				return err
 			}
@@ -37,7 +43,7 @@ anything that would rather read the data than the picture.`,
 
 			// A served page can ask for the parts of the graph its limits left out,
 			// which an exported one has nobody to ask for.
-			handler := (&web.Server{Scene: s, Expand: opts.expand}).Handler()
+			handler := (&web.Server{Scene: s, Expand: gr.scene}).Handler()
 			srv := &http.Server{
 				Handler:           handler,
 				ReadHeaderTimeout: 5 * time.Second,

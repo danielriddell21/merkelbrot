@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/danielriddell21/merkelbrot/scene"
+	"github.com/danielriddell21/merkelbrot/web"
 )
 
 // run drives the command tree the way a shell would, capturing both streams.
@@ -345,5 +346,76 @@ func TestServeRejectsAnUnusableAddress(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "listening") {
 		t.Errorf("error = %q, want it to mention listening", err)
+	}
+}
+
+func ptr(n int) *int { return &n }
+
+// TestGrowerOnlyWidensTheWindow checks the bookkeeping a page relies on: it reads
+// the limit back to work out what to ask for next, so a request for less than has
+// already been read must not record a smaller one.
+func TestGrowerOnlyWidensTheWindow(t *testing.T) {
+	gr, err := newGrower(&options{source: "synthetic", seed: 1, count: 12, maxNodes: 20, maxChain: 12})
+	if err != nil {
+		t.Fatalf("newGrower: %v", err)
+	}
+	at := func(ask web.Ask) *scene.Scene {
+		t.Helper()
+		s, err := gr.scene(ask)
+		if err != nil {
+			t.Fatalf("scene(%+v): %v", ask, err)
+		}
+		return s
+	}
+
+	small := at(web.Ask{})
+	if got, want := small.Stats.Read, 20; got != want {
+		t.Fatalf("first read = %d, want %d", got, want)
+	}
+
+	wider := at(web.Ask{Nodes: ptr(60)})
+	if got, want := wider.Stats.Read, 60; got != want {
+		t.Errorf("after asking for 60, read = %d, want %d", got, want)
+	}
+	if len(wider.Nodes) <= len(small.Nodes) {
+		t.Errorf("reading further gave %d nodes, was %d", len(wider.Nodes), len(small.Nodes))
+	}
+
+	// Asking for less cannot un-read what is already held.
+	if got, want := at(web.Ask{Nodes: ptr(5)}).Stats.Read, 60; got != want {
+		t.Errorf("after asking for 5, read = %d, want it to stay at %d", got, want)
+	}
+
+	// Zero is no limit, and once there is no limit there is nothing more to ask.
+	if got := at(web.Ask{Nodes: ptr(0)}).Stats.Read; got != 0 {
+		t.Errorf("after lifting the limit, read = %d, want 0", got)
+	}
+	if got := at(web.Ask{Nodes: ptr(10)}).Stats.Read; got != 0 {
+		t.Errorf("asking for 10 after the limit was lifted set read = %d, want it left at 0", got)
+	}
+}
+
+// TestGrowerRelaysOutWithoutRereading is why the graph is kept at all: changing
+// only the chain limit is a fresh layout of the same graph.
+func TestGrowerRelaysOutWithoutRereading(t *testing.T) {
+	gr, err := newGrower(&options{source: "synthetic", seed: 1, count: 12, maxChain: 3})
+	if err != nil {
+		t.Fatalf("newGrower: %v", err)
+	}
+	tight, err := gr.scene(web.Ask{})
+	if err != nil {
+		t.Fatalf("scene: %v", err)
+	}
+	held := gr.graph
+
+	loose, err := gr.scene(web.Ask{Chain: ptr(12)})
+	if err != nil {
+		t.Fatalf("scene: %v", err)
+	}
+	if gr.graph != held {
+		t.Error("the graph was replaced by a request that only changed the chain limit")
+	}
+	if len(loose.Nodes) <= len(tight.Nodes) {
+		t.Errorf("a looser chain gave %d nodes, was %d", len(loose.Nodes), len(tight.Nodes))
 	}
 }

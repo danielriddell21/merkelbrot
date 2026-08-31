@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/danielriddell21/merkelbrot/examples/gitrepo"
 	"github.com/danielriddell21/merkelbrot/examples/ledger"
@@ -45,18 +46,22 @@ func (o *options) build() (*scene.Scene, error) {
 	if err != nil {
 		return nil, fmt.Errorf("loading %s: %w", o.source, err)
 	}
+	return o.sceneFrom(src, g, title, chains, o.maxChain, o.maxNodes)
+}
 
+// sceneFrom lays a graph out and attaches whatever evidence was asked for.
+func (o *options) sceneFrom(src graph.Source[string], g *graph.Graph[string], title string, chains []string, maxChain, read int) (*scene.Scene, error) {
 	b := scene.Builder[string]{Title: title}
 	s := b.Scene(layout.Pack(g, layout.Options{
 		MaxDepth:       o.maxDepth,
 		ChainKinds:     chains,
-		MaxChain:       o.maxChain,
+		MaxChain:       maxChain,
 		SeparateChains: o.separate,
 	}))
 
 	// The limit the source was read under is the caller's to report: the layout is
 	// given a graph and cannot know how much of one it is.
-	s.Stats.Read = o.maxNodes
+	s.Stats.Read = read
 
 	if o.prove != "" {
 		marks, err := o.inclusion(g, b)
@@ -165,19 +170,60 @@ func resolve(g *graph.Graph[string], ref string) (string, error) {
 	}
 }
 
-// expand builds the scene again under the limits a served page asked for, which
-// is how it reaches history or objects the original limits left out.
-func (o *options) expand(ask web.Ask) (*scene.Scene, error) {
-	// The options are copied so that answering one request does not change what
-	// every later request gets.
-	with := *o
+// grower answers a page's requests for more of the graph, keeping what it has
+// already read between them.
+//
+// Rebuilding from scratch would ask the source for every node again each time
+// somebody asked to see a little more, which on a large repository is the whole
+// cost of the view. Holding the graph means a wider read costs only the part that
+// is new, and asking for more history costs nothing at all — the same graph is
+// simply laid out again.
+type grower struct {
+	opts   options
+	src    graph.Source[string]
+	title  string
+	chains []string
+
+	mu    sync.Mutex
+	graph *graph.Graph[string]
+	read  int
+}
+
+func newGrower(o *options) (*grower, error) {
+	src, title, chains, err := o.open()
+	if err != nil {
+		return nil, err
+	}
+	g, err := graph.NewLimited(src, graph.Limit{MaxNodes: o.maxNodes})
+	if err != nil {
+		return nil, fmt.Errorf("loading %s: %w", o.source, err)
+	}
+	return &grower{opts: *o, src: src, title: title, chains: chains, graph: g, read: o.maxNodes}, nil
+}
+
+// scene serves the graph as it stands, reading further into the source first if
+// that is what was asked for.
+func (gr *grower) scene(ask web.Ask) (*scene.Scene, error) {
+	gr.mu.Lock()
+	defer gr.mu.Unlock()
+
+	// The window only ever widens. A request for less than has already been read
+	// cannot un-read it, so recording a smaller limit would only mislead the page
+	// about what to ask for next; and once the source has been read whole, a limit
+	// of zero, there is nothing further to ask for.
+	if ask.Nodes != nil && gr.read != 0 && (*ask.Nodes == 0 || *ask.Nodes > gr.read) {
+		grown, err := gr.graph.Grow(gr.src, graph.Limit{MaxNodes: *ask.Nodes})
+		if err != nil {
+			return nil, fmt.Errorf("reading further into %s: %w", gr.opts.source, err)
+		}
+		gr.graph, gr.read = grown, *ask.Nodes
+	}
+
+	maxChain := gr.opts.maxChain
 	if ask.Chain != nil {
-		with.maxChain = *ask.Chain
+		maxChain = *ask.Chain
 	}
-	if ask.Nodes != nil {
-		with.maxNodes = *ask.Nodes
-	}
-	return with.build()
+	return gr.opts.sceneFrom(gr.src, gr.graph, gr.title, gr.chains, maxChain, gr.read)
 }
 
 // open returns the source, its title, and the kinds whose same-kind edges are
