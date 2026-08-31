@@ -42,3 +42,20 @@ jobs:
         working-directory: web/internal/viewertest
       - run: node smoke.mjs
         working-directory: web/internal/viewertest
+
+  # The test suites are held to a mutation-testing threshold as well as a
+  # coverage one, so a test that runs the code without checking it fails here.
+  mutation:
+    name: Mutation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
+      - name: Core
+        run: gremlins unleash
+      - name: Renderer
+        run: gremlins unleash
+        working-directory: web

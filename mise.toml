@@ -4,6 +4,7 @@ go = "1.26.4"
 lefthook = "latest"
 "go:github.com/a-h/templ/cmd/templ" = "0.3.1020"
 "go:github.com/goreleaser/goreleaser/v2" = "latest"
+"go:github.com/go-gremlins/gremlins/cmd/gremlins" = "0.6.0"
 
 [tasks.generate]
 description = "Regenerate templ components"
@@ -16,6 +17,10 @@ run = "go build ./... ./web/..."
 [tasks.test]
 description = "Run every test in the workspace"
 run = "go test ./... ./web/..."
+
+[tasks.mutate]
+description = "Run mutation testing over both modules"
+run = ["gremlins unleash", "cd web && gremlins unleash"]
 
 [tasks.lint]
 description = "Run golangci-lint over the workspace"
