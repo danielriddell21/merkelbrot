@@ -43,10 +43,11 @@ jobs:
       - run: node smoke.mjs
         working-directory: web/internal/viewertest
 
-  # The test suites are held to a mutation-testing threshold as well as a
-  # coverage one, so a test that runs the code without checking it fails here.
+  # The shared workflow already holds the core to a mutation-testing threshold,
+  # but it runs at the repository root and the renderer is a module of its own,
+  # so nothing there ever reaches it.
   mutation:
-    name: Mutation
+    name: Mutation (renderer)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -54,8 +55,5 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
-      - name: Core
-        run: gremlins unleash
-      - name: Renderer
-        run: gremlins unleash
+      - run: gremlins unleash
         working-directory: web

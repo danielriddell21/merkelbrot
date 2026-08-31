@@ -20,6 +20,8 @@ run = "go test ./... ./web/..."
 
 [tasks.mutate]
 description = "Run mutation testing over both modules"
+# CI runs the core through the shared workflow and the renderer through a job of
+# its own; locally there is one command for both.
 run = ["gremlins unleash", "cd web && gremlins unleash"]
 
 [tasks.lint]
