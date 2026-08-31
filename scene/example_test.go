@@ -1,6 +1,7 @@
 package scene_test
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -121,4 +122,79 @@ func ExampleScene_WriteJSON() {
 	//   "title": "one node",
 	//   "version": 1
 	// }
+}
+
+// ExampleBuilder_Consistency marks what one version of a graph kept from another
+// and what it added, which is what a consistency proof is for.
+func ExampleBuilder_Consistency() {
+	g, err := graph.New(graph.NewMemorySource([]string{"c2"},
+		graph.Node[string]{ID: "c2", Kind: "commit", Children: []string{"c1", "t2"}},
+		graph.Node[string]{ID: "c1", Kind: "commit", Children: []string{"t1"}},
+		graph.Node[string]{ID: "t2", Kind: "tree", Children: []string{"kept", "added"}},
+		graph.Node[string]{ID: "t1", Kind: "tree", Children: []string{"kept"}},
+		graph.Node[string]{ID: "kept", Kind: "blob"},
+		graph.Node[string]{ID: "added", Kind: "blob"},
+	))
+	if err != nil {
+		panic(err)
+	}
+
+	b := scene.Builder[string]{Title: "two commits"}
+	s := b.Scene(layout.Pack(g, layout.Options{}))
+
+	d, ok := proof.Consistency(g, "t1", "t2")
+	if !ok {
+		panic("unknown roots")
+	}
+	s.Add(b.Consistency(d)...)
+
+	for _, h := range s.Highlights {
+		fmt.Printf("%s (%s): %v\n", h.Name, h.Kind, h.Nodes)
+	}
+	// Output:
+	// retained (shared): [kept]
+	// added (added): [t2 added]
+	// removed (removed): [t1]
+}
+
+// ExampleBuilder_Invalid turns the result of a verification into something the
+// renderer can show: the nodes whose stored hash no longer matches what their
+// contents produce.
+func ExampleBuilder_Invalid() {
+	// A node's hash covers its label and the hashes of its children.
+	hash := func(n graph.Node[string], children [][]byte) ([]byte, error) {
+		h := sha256.New()
+		h.Write([]byte(n.Label))
+		for _, c := range children {
+			h.Write(c)
+		}
+		return h.Sum(nil), nil
+	}
+
+	leaf := graph.Node[string]{ID: "entry", Label: "DR 5000 Cost of sales"}
+	leaf.Hash, _ = hash(leaf, nil)
+	root := graph.Node[string]{ID: "txn", Label: "payment", Children: []string{"entry"}}
+	root.Hash, _ = hash(root, [][]byte{leaf.Hash})
+
+	// The entry is edited after the fact, but its stored hash is left alone.
+	leaf.Label = "DR 5000 Cost of sales (adjusted)"
+
+	g, err := graph.New(graph.NewMemorySource([]string{"txn"}, root, leaf))
+	if err != nil {
+		panic(err)
+	}
+	bad, err := proof.Verify(g, hash)
+	if err != nil {
+		panic(err)
+	}
+
+	b := scene.Builder[string]{Title: "tampered"}
+	s := b.Scene(layout.Pack(g, layout.Options{}))
+	s.Add(b.Invalid(bad)...)
+
+	for _, h := range s.Highlights {
+		fmt.Printf("%s (%s): %v\n", h.Name, h.Kind, h.Nodes)
+	}
+	// Output:
+	// hash mismatch (invalid): [txn entry]
 }
