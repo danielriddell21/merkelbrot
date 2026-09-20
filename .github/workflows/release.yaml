@@ -4,42 +4,10 @@ on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write
-
 jobs:
   release:
-    name: letsgo
-    runs-on: ubuntu-latest
-    steps:
-      # No fetch-depth: 0. letsgo falls back to the GitHub compare API when the
-      # changelog needs history a shallow clone does not have.
-      - uses: actions/checkout@v7
-
-      # The Go version changes the bytes of the binaries, so it is pinned by
-      # go.mod rather than floating on `stable`.
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-
-      # letsgo publishes the release and the tap formula with one token, and a
-      # workflow token cannot write to another repository at all. The App token
-      # therefore has to be scoped to this repository as well as the tap.
-      - uses: actions/create-github-app-token@v3
-        id: token
-        with:
-          app-id: ${{ vars.TAP_APP_ID }}
-          private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: |
-            ${{ github.event.repository.name }}
-            homebrew-tap
-
-      # The letsgo version is pinned rather than left to the action's default:
-      # letsgo decides the archive layout and the linker flags, so it is a
-      # build input, and a release built by a version nobody chose is a
-      # release nobody can reproduce.
-      - uses: danielriddell21/letsgo-action@v1
-        with:
-          version: v0.5.0
-          token: ${{ steps.token.outputs.token }}
+    uses: danielriddell21/github-actions/.github/workflows/release.yaml@v2
+    permissions:
+      contents: write
+    secrets:
+      tap-app-private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
