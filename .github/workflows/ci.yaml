@@ -63,4 +63,4 @@ jobs:
           version: v0.6.0
           workdir: web
           workers: 2
-          memory-mb: 6144
+          memory-mb: 12288
