@@ -36,7 +36,7 @@ const sources = [
 
 function exportPage(source) {
 	const html = execFileSync(
-		"go",
+		"go", // NOSONAR: the toolchain on the runner's PATH is the one under test
 		["run", "./cmd/merkelbrot", "export", ...source.args],
 		{ cwd: webDir, maxBuffer: 64 * 1024 * 1024, encoding: "utf8" },
 	);
@@ -180,7 +180,7 @@ async function run(source) {
 		return { role: c.getAttribute("role"), label: c.getAttribute("aria-label") || "" };
 	});
 	check(source.name, described.role === "img", "the canvas has no role");
-	check(source.name, /\d+ nodes/.test(described.label), `the canvas description says nothing useful: ${JSON.stringify(described.label)}`);
+	check(source.name, /\d nodes/.test(described.label), `the canvas description says nothing useful: ${JSON.stringify(described.label)}`);
 
 	check(source.name, errors.length === 0, errors.join(" | "));
 	await page.close();
