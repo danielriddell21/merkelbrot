@@ -38,9 +38,11 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: web/internal/viewertest/package-lock.json
-      - run: npm ci
+      # The lock file pins every package and nothing runs at install time.
+      - run: npm ci --ignore-scripts
         working-directory: web/internal/viewertest
-      - run: npx playwright install --with-deps chromium
+      # The playwright the lock file installed, rather than whatever npx finds.
+      - run: ./node_modules/.bin/playwright install --with-deps chromium
         working-directory: web/internal/viewertest
       - run: node smoke.mjs
         working-directory: web/internal/viewertest
@@ -56,6 +58,9 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - run: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0
-      - run: gremlins unleash
-        working-directory: web
+      - uses: danielriddell21/gremlins-action@v1
+        with:
+          version: v0.6.0
+          workdir: web
+          workers: 2
+          memory-mb: 6144
