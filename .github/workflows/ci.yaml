@@ -14,6 +14,8 @@ jobs:
     permissions:
       contents: read
     with:
+      # A release candidate; promote.yaml publishes the stable version.
+      pre: true
       vet: true
       # Both modules: the core, and the templ renderer that lives in its own
       # module so importing the core never pulls a web dependency in.
