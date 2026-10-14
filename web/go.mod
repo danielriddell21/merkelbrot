@@ -3,7 +3,7 @@ module github.com/danielriddell21/merkelbrot/web
 go 1.27.1
 
 require (
-	github.com/a-h/templ v0.3.1020
+	github.com/a-h/templ v0.3.1070
 	github.com/danielriddell21/merkelbrot v0.2.1
 	github.com/spf13/cobra v1.10.2
 )
